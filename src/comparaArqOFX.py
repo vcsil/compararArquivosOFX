@@ -5,12 +5,13 @@ Created on Thu Apr 13 11:47:17 2023
 @author: vinic
 """
 
-from ofxparse import OfxParser
 from controller.browse_folders import get_name_ofx, get_old_directory
+from controller.user_navigation import escolher_instituicao_finan
+from ofxparse import OfxParser
 
 
 # Pega o diretório atual
-dir_atual = "C:\\Users\\vinic\\Downloads\\repositorios\\compararArquivosOFX\\ofx-example\\Extrato\\Itau\\2023\\04 - Abr 2023\\2023-04-26\\03" # os.getcwd()
+dir_atual = escolher_instituicao_finan()  # os.getcwd()
 
 # Identifica o arquivo ofx no diretório atual
 ofx_atual = get_name_ofx(dir_atual)
