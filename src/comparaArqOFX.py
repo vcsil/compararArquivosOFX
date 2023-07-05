@@ -7,6 +7,9 @@ Created on Thu Apr 13 11:47:17 2023
 
 from controller.browse_folders import get_name_ofx, get_old_directory
 from controller.user_navigation import escolher_instituicao_finan
+from controller.ofx_functions import pegar_dia_insterseccao
+from controller.ofx_functions import pegar_infos_transacoes
+
 from ofxparse import OfxParser
 
 
@@ -27,14 +30,15 @@ with open(ofx_atual, 'rb') as arquivo_ofx_atual:
 with open(ofx_anterior, 'rb') as arquivo_ofx_anterior:
     ofx_anterior = OfxParser.parse(arquivo_ofx_anterior)
 
-# Coleta todos os checknum (identificadores) do arquvio anterior
-list_checknum_anterior = []
-for transacao in ofx_anterior.account.statement.transactions:
-    list_checknum_anterior.append(transacao.checknum)
+# Pegar o dia na ultima transação do ofx anterior
+ultimo_dia_ofx_anterior = ofx_anterior.account.statement.transactions[-1]
+ultimo_dia_ofx_anterior = ultimo_dia_ofx_anterior.date.strftime("%Y-%m-%d")
 
-# Passar por todas as transações atuais
-todas_transactions_atual = ofx_atual.account.statement.transactions
-len_transactions = len(todas_transactions_atual)
+# Pegar o dia de intersecção do ofx atual
+data_interseccao = pegar_dia_insterseccao(ofx_atual, ultimo_dia_ofx_anterior)
+
+# Passar por todas transações do ofx atual que pertencem a data de intersecção
+infos_transacoes_atual = pegar_infos_transacoes(ofx_atual, data_interseccao)
 
 for idx in range(len_transactions):
     if (todas_transactions_atual[idx].checknum in list_checknum_anterior):
