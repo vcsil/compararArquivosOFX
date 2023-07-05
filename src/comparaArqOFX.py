@@ -2,7 +2,7 @@
 """
 Created on Thu Apr 13 11:47:17 2023
 
-@author: vinic
+@author: vsil
 """
 
 from controller.browse_folders import get_name_ofx, get_old_directory
