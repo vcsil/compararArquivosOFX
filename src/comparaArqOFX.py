@@ -6,16 +6,18 @@ Created on Thu Apr 13 11:47:17 2023
 """
 
 from controller.browse_folders import get_name_ofx, get_old_directory
-from controller.user_navigation import escolher_instituicao_finan
+from controller.user_navigation import define_diretorio
 from controller.ofx_functions import pegar_dia_insterseccao
 from controller.ofx_functions import pegar_infos_transacoes
 from controller.ofx_functions import remove_transacao
 
+from colorama import init, Style, Back
 from ofxparse import OfxParser
 
+init()
 
 # Pega o diretório atual
-dir_atual = escolher_instituicao_finan()  # os.getcwd()
+dir_atual = define_diretorio()  # os.getcwd()
 
 # Identifica o arquivo ofx no diretório atual
 ofx_atual = get_name_ofx(dir_atual)
@@ -47,8 +49,8 @@ inf_transacoes_anterior = pegar_infos_transacoes(ofx_anterior, data_interseccao)
 # Quantidade de transações a mais
 diferenca_transacoes = len(inf_transacoes_atual) - len(inf_transacoes_anterior)
 
-print(f"Quantidade da transações antes (a ser removida): {len(inf_transacoes_anterior)}")
-print(f"Quantidade da transações depois: {len(inf_transacoes_atual)}\n")
+print(f"Quantidade da transações ofx anterior (a ser removida): {len(inf_transacoes_anterior)}")
+print(f"Quantidade da transações ofx atual: {len(inf_transacoes_atual)}\n")
 print(f"Diferença no total de transações (a ficar): {diferenca_transacoes}\n")
 
 # Passar por todas as transações do ofx anterior na data de intersecção
@@ -64,4 +66,7 @@ for transacao_anterior, _ in inf_transacoes_anterior:
             ofx_atual = remove_transacao(ofx_atual, identificador)
             transacoes_removidas += 1
 
-print(f"Transações removidas do ofx atual: {transacoes_removidas}\n")
+if (transacoes_removidas == len(inf_transacoes_anterior)):
+    print(Back.GREEN + f"Transações removidas do ofx atual: {transacoes_removidas}\n" + Style.RESET_ALL)
+else:
+    print(Back.RED + f"Transações removidas do ofx atual: {transacoes_removidas}\n" + Style.RESET_ALL)
