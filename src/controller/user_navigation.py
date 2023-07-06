@@ -48,7 +48,7 @@ def escolher_instituicao_finan():
         return diretorio
     else:
         diretorio = retorna_diretorio_hoje(dict_inst_financeira[inst_finan])
-        print("\n")
+        print("")
 
     return diretorio
 
