@@ -30,9 +30,20 @@ def pegar_infos_transacoes(ofx, data_interseccao):
 
         # Verifica se transação é do mesmo dia
         if (data_interseccao == dia_transacao):
-            informacoes = (transacao.memo, transacao.amount, transacao.id)
+            informacoes = [(transacao.memo, transacao.amount), transacao.id]
             infos_transacoes.append(informacoes)
         elif (data_interseccao < dia_transacao):
             break
 
     return infos_transacoes
+
+
+def remove_transacao(ofx, identificador):
+    for idx in range(len(ofx.account.statement.transactions)):
+        transacao = ofx.account.statement.transactions[idx]
+
+        if (transacao.id == identificador):
+            ofx.account.statement.transactions.pop(idx)
+            return ofx
+
+    raise ValueError(f"Não foi possível encontrar a trasação de id: {identificador}")
