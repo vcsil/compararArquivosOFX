@@ -7,9 +7,11 @@ Created on Thu Apr 13 11:47:17 2023
 
 from controller.browse_folders import get_name_ofx, get_old_directory
 from controller.user_navigation import define_diretorio
+from controller.ofx_functions import carregar_ofx
 from controller.ofx_functions import pegar_dia_insterseccao
 from controller.ofx_functions import pegar_infos_transacoes
 from controller.ofx_functions import remove_transacao
+from controller.ofx_functions import salvar_ofx
 
 from colorama import init, Style, Back
 
@@ -31,8 +33,8 @@ header_atual, ofx_atual = carregar_ofx(ofx_atual)
 header_anterior, ofx_anterior = carregar_ofx(ofx_anterior)
 
 # Pegar o dia na ultima transação do ofx anterior
-ultimo_dia_ofx_anterior = ofx_anterior.account.statement.transactions[-1]
-ultimo_dia_ofx_anterior = ultimo_dia_ofx_anterior.date.strftime("%Y-%m-%d")
+ultimo_dia_ofx_anterior = ofx_anterior.statements[0].transactions[-1]
+ultimo_dia_ofx_anterior = ultimo_dia_ofx_anterior.dtposted.strftime("%Y-%m-%d")
 
 # Pegar o dia de intersecção entre os ofx
 data_interseccao = pegar_dia_insterseccao(ofx_atual, ultimo_dia_ofx_anterior)
@@ -67,3 +69,5 @@ if (transacoes_removidas == len(inf_transacoes_anterior)):
     print(Back.GREEN + f"Transações removidas do ofx atual: {transacoes_removidas}\n" + Style.RESET_ALL)
 else:
     print(Back.RED + f"Transações removidas do ofx atual: {transacoes_removidas}\n" + Style.RESET_ALL)
+
+salvar_ofx(ofx_atual, header_atual, dir_atual)
