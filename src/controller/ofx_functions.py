@@ -5,7 +5,15 @@ Created on Wed Jul  5 12:03:33 2023
 @author: vsil
 """
 
+from ofxtools.Parser import OFXTree
+def carregar_ofx(ofx_dir):
+    parser = OFXTree()
+    with open(ofx_dir, 'rb') as arquivo_ofx:
+        parser.parse(arquivo_ofx)
+        headers = str(parser.header).replace("\r\n", "\n")
 
+        ofx = parser.convert()
+        return headers, ofx
 def pegar_dia_insterseccao(ofx, ultimo_dia_ofx_anterior):
     # Pegar o dia de intersecção entre os ofx
     qnt_transacoes = len(ofx.account.statement.transactions)

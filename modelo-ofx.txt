@@ -1,22 +1,22 @@
-OFXHEADER:	100										ofx.headers.OFXHEADER
-DATA:		OFXSGML									ofx.headers.DATA
-VERSION:	102 	/ 100									ofx.headers.VERSION
-SECURITY:	NONE										ofx.headers.SECURITY
-ENCODING:	USASCII	/ UTF-8							ofx.headers.ENCODING
-CHARSET:	1252	/ NONE								ofx.headers.CHARSET
-COMPRESSION:NONE										ofx.headers.COMPRESSION
-OLDFILEUID:	NONE										ofx.headers.OLDFILEUID
-NEWFILEUID:	NONE										ofx.headers.NEWFILEUID
+OFXHEADER:	100										parser.header.ofxheader
+DATA:		OFXSGML										parser.header.data
+VERSION:	102 	/ 100									parser.header.version
+SECURITY:	NONE										parser.header.security
+ENCODING:	USASCII	/ UTF-8									parser.header.encoding
+CHARSET:	1252	/ NONE									parser.header.charset
+COMPRESSION:	NONE										parser.header.compression
+OLDFILEUID:	NONE										parser.header.oldfileuid
+NEWFILEUID:	NONE										parser.header.newfileuid
 
 <OFX>
-	<SIGNONMSGSRSV1>
-		<SONRS>
-			<STATUS>
-				<CODE>0
-				<SEVERITY>INFO
+	<SIGNONMSGSRSV1>								ofx.signonmsgsrsv1
+		<SONRS>									ofx.signonmsgsrsv1.sonrs
+			<STATUS>							ofx.signonmsgsrsv1.sonrs.status
+				<CODE>0							ofx.signonmsgsrsv1.sonrs.status.code
+				<SEVERITY>INFO						ofx.signonmsgsrsv1.sonrs.status.severity
 			</STATUS>
-			<DTSERVER>20230411100000[-03:EST]
-			<LANGUAGE>POR
+			<DTSERVER>20230411100000[-03:EST]				ofx.signonmsgsrsv1.sonrs.dtserver
+			<LANGUAGE>POR							ofx.signonmsgsrsv1.sonrs.language
 		<FI>
 			<ORG>Banco 
 			<FID>1
@@ -26,35 +26,38 @@ NEWFILEUID:	NONE										ofx.headers.NEWFILEUID
 	<BANKMSGSRSV1>
 		<STMTTRNRS>
 			<TRNUID>1001	/ 1						ofx.trnuid
-			<STATUS>
-				<CODE>0
-				<SEVERITY>INFO
+			<STATUS>							ofx.status
+				<CODE>0							ofx.status.code
+				<SEVERITY>INFO						ofx.status.severity
 			</STATUS>
-			<STMTRS>
-				<CURDEF>BRL							ofx.account.curdef
-				<BANKACCTFROM>
-					<BANKID>XXXX					ofx.account.routing_number
-					<ACCTID>XXXXXXXXXX				ofx.account.account_id
-					<ACCTTYPE>CHECKING				ofx.account.account_type
-				</BANKACCTFROM>
-				<BANKTRANLIST>
-					<DTSTART>20230411100000[-03:EST]		ofx.account.statement.start_date
-					<DTEND>20230411100000[-03:EST]		ofx.account.statement.end_date
 
-					<STMTTRN>
-						<TRNTYPE>CREDIT				ofx.account.statement.transactions[0].type
-						<DTPOSTED>20230411100000[-03:EST]	ofx.account.statement.transactions[0].date
-						<TRNAMT>60.00				ofx.account.statement.transactions[0].amount
-						<FITID>XXXXXXXXXXX			ofx.account.statement.transactions[0].id
-						<CHECKNUM>XXXXXXXXXXX			ofx.account.statement.transactions[0].checknum
-						<MEMO>XXX XXXXX  XXXXXXXXXX XX	ofx.account.statement.transactions[0].memo
+											ofx.statements
+			<STMTRS>							ofx.statements[0]
+				<CURDEF>BRL						ofx.statements[0].curdef
+				<BANKACCTFROM>						ofx.statements[0].bankacctfrom
+					<BANKID>XXXX					ofx.statements[0].bankacctfrom.bankid
+					<ACCTID>XXXXXXXXXX				ofx.statements[0].bankacctfrom.acctid
+					<ACCTTYPE>CHECKING				ofx.statements[0].bankacctfrom.accttype
+				</BANKACCTFROM>
+
+				<BANKTRANLIST>						ofx.statements[0].banktranlist
+					<DTSTART>20230411100000[-03:EST]		ofx.statements[0].banktranlist.dtstart
+					<DTEND>20230411100000[-03:EST]			ofx.statements[0].banktranlist.dtend
+
+					<STMTTRN>					ofx.statements[0].transactions[0]
+						<TRNTYPE>CREDIT				ofx.statements[0].transactions[0].trntype
+						<DTPOSTED>20230411100000[-03:EST]	ofx.statements[0].transactions[0].dtposted
+						<TRNAMT>60.00				ofx.statements[0].transactions[0].trnamt
+						<FITID>XXXXXXXXXXX			ofx.statements[0].transactions[0].fitid
+						<CHECKNUM>XXXXXXXXXXX			oofx.statements[0].transactions[0].checknum
+						<MEMO>XXX XXXXX  XXXXXXXXXX XX		ofx.statements[0].transactions[0].memo
 
 					</STMTTRN>
 
 				</BANKTRANLIST>
-				<LEDGERBAL>
-					<BALAMT>XXX.XX					ofx.account.statement.balance
-					<DTASOF>20230411100000[-03:EST]		ofx.account.statement.balance_date
+				<LEDGERBAL>						ofx.statements[0].ledgerbal
+					<BALAMT>XXX.XX					ofx.statements[0].ledgerbal.balamt
+					<DTASOF>20230411100000[-03:EST]			ofx.statements[0].ledgerbal.dtasof
 				</LEDGERBAL>
 			</STMTRS>
 		</STMTTRNRS>

@@ -12,7 +12,6 @@ from controller.ofx_functions import pegar_infos_transacoes
 from controller.ofx_functions import remove_transacao
 
 from colorama import init, Style, Back
-from ofxparse import OfxParser
 
 init()
 
@@ -26,12 +25,10 @@ ofx_atual = get_name_ofx(dir_atual)
 ofx_anterior = get_old_directory(dir_atual)
 
 # Carrega o arquivo OFX atual
-with open(ofx_atual, 'rb') as arquivo_ofx_atual:
-    ofx_atual = OfxParser.parse(arquivo_ofx_atual)
+header_atual, ofx_atual = carregar_ofx(ofx_atual)
 
 # Carrega o arquivo OFX anterior
-with open(ofx_anterior, 'rb') as arquivo_ofx_anterior:
-    ofx_anterior = OfxParser.parse(arquivo_ofx_anterior)
+header_anterior, ofx_anterior = carregar_ofx(ofx_anterior)
 
 # Pegar o dia na ultima transação do ofx anterior
 ultimo_dia_ofx_anterior = ofx_anterior.account.statement.transactions[-1]
