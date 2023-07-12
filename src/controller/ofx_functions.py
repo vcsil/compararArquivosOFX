@@ -32,7 +32,7 @@ def pegar_dia_insterseccao(ofx, ultimo_dia_ofx_anterior):
         if (data == ultimo_dia_ofx_anterior):
             return data
 
-        elif (idx == qnt_transacoes):
+        elif (idx == (qnt_transacoes-1)):
             raise FileExistsError("Não há uma intersecção da datas entre esses arquivos para fazer a comparação de transação.")
 
 
