@@ -11,6 +11,7 @@ from controller.ofx_functions import carregar_ofx
 from controller.ofx_functions import pegar_dia_insterseccao
 from controller.ofx_functions import pegar_infos_transacoes
 from controller.ofx_functions import remove_transacao
+from controller.ofx_functions import remove_anteriores
 from controller.ofx_functions import salvar_ofx
 
 from colorama import init, Style, Back
