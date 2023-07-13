@@ -38,6 +38,8 @@ ultimo_dia_ofx_anterior = ultimo_dia_ofx_anterior.dtposted.strftime("%Y-%m-%d")
 
 # Pegar o dia de intersecção entre os ofx
 data_interseccao = pegar_dia_insterseccao(ofx_atual, ultimo_dia_ofx_anterior)
+# Removar transações anteriores ao da data de intersecção
+ofx_atual = remove_anteriores(ofx_atual, data_interseccao)
 
 # Pegar transações do ofx atual que pertencem a data de intersecção
 inf_transacoes_atual = pegar_infos_transacoes(ofx_atual, data_interseccao)

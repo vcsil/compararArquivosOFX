@@ -64,7 +64,33 @@ def remove_transacao(ofx, identificador):
     raise ValueError(f"Não foi possível encontrar a trasação de id: {identificador}")
 
 
-def salvar_ofx(ofx, headers, diretorio):
+def remove_anteriores(ofx, data_interseccao):
+    # Pega esse formato para comparar se é antes ou depois
+    data_interseccao = datetime.strptime(data_interseccao, "%Y-%m-%d")
+
+    lista_anteriores = []
+    # Passa por todas as transições procurando as que são de datas anteriores
+    for transacao in ofx.statements[0].transactions:
+        data_transacao = transacao.dtposted.strftime("%Y-%m-%d")
+        data_transacao = datetime.strptime(data_transacao, "%Y-%m-%d")
+
+        if (data_transacao < data_interseccao):
+            lista_anteriores.append([transacao.checknum, transacao.memo])
+
+    # Passa por todas as transações de datas anteriores removendo do OFX
+    for transacao_checknum, transacao_memo in lista_anteriores:
+        for idx in range(len(ofx.statements[0].transactions)):
+            transacao = ofx.statements[0].transactions[idx]
+            mesmo_checknum = transacao_checknum == transacao.checknum
+            mesmo_memo = transacao_memo == transacao.memo
+
+            if (mesmo_checknum and mesmo_memo):
+                ofx.statements[0].transactions.pop(idx)
+                break
+
+    return ofx
+
+
     # Aproxima de XML
     ofx = ofx.to_etree()
     # Converte para bytes
