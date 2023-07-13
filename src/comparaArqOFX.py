@@ -27,11 +27,13 @@ ofx_atual = get_name_ofx(dir_atual)
 # Vai buscar o arquivo ofx anterior imediado (da ultima data atualiazada)
 ofx_anterior = get_old_directory(dir_atual)
 
-# Carrega o arquivo OFX atual
+# Carrega o arquivo OFX atual e ordena as transações pelo dia, crescente
 header_atual, ofx_atual = carregar_ofx(ofx_atual)
+ofx_atual.statements[0].transactions.sort(key=lambda x: x.dtposted)
 
-# Carrega o arquivo OFX anterior
+# Carrega o arquivo OFX anterior e ordena as transações pelo dia, crescente
 header_anterior, ofx_anterior = carregar_ofx(ofx_anterior)
+ofx_anterior.statements[0].transactions.sort(key=lambda x: x.dtposted)
 
 # Pegar o dia na ultima transação do ofx anterior
 ultimo_dia_ofx_anterior = ofx_anterior.statements[0].transactions[-1]
