@@ -69,15 +69,18 @@ def remove_anteriores(ofx, data_interseccao):
     data_interseccao = datetime.strptime(data_interseccao, "%Y-%m-%d")
 
     lista_anteriores = []
-    # Passa por todas as transições procurando as que são de datas anteriores
+    # Passa pelas transições anteriores e salva informações
     for transacao in ofx.statements[0].transactions:
         data_transacao = transacao.dtposted.strftime("%Y-%m-%d")
         data_transacao = datetime.strptime(data_transacao, "%Y-%m-%d")
 
         if (data_transacao < data_interseccao):
             lista_anteriores.append([transacao.checknum, transacao.memo])
+        elif (data_transacao == data_interseccao):
+            print(f'\n{len(lista_anteriores)} transações de dia anteriores removidas\n')
+            break
 
-    # Passa por todas as transações de datas anteriores removendo do OFX
+    # Remove as transações de dias anteriores do OFX
     for transacao_checknum, transacao_memo in lista_anteriores:
         for idx in range(len(ofx.statements[0].transactions)):
             transacao = ofx.statements[0].transactions[idx]
