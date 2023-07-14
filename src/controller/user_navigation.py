@@ -92,7 +92,18 @@ def retorna_diretorio_hoje(inst_financeira):
     diretorio += mes + " - " + dict_mes[mes] + " " + ano + "\\"
     diretorio += ano + "-" + mes + "-" + dia
 
-    ultima_pasta = os.listdir(diretorio)[-1]
+    # Procurar o ulitmo diretório criado
+    # Pega tudo dentro do diretório e o tamanho
+    lista_arq = os.listdir(diretorio)
+    len_lista_arq = len(lista_arq)
+    # Vai passando até encontrar o último que não é ofx
+    for idx in range(len_lista_arq-1, -1, -1):
+        pos = idx - len_lista_arq
+        nome = os.listdir(diretorio)[pos]
+        if ".ofx" not in nome:
+            ultima_pasta = nome
+            break
+
     diretorio += '\\' + ultima_pasta
 
     return diretorio
