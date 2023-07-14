@@ -1,2 +1,9 @@
 ofx-example/
+
+src/__pycache__/
+src/controller/__pycache__/
 __pycache__/
+*.pyc
+
+venv/
+comparaArquivosOFX/
