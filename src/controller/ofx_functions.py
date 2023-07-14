@@ -9,6 +9,7 @@ from ofxtools.Parser import OFXTree
 import xml.etree.ElementTree as ET
 import xml.dom.minidom
 from datetime import datetime
+import os
 
 
 def carregar_ofx(ofx_dir):
@@ -47,8 +48,6 @@ def pegar_infos_transacoes(ofx, data_interseccao):
         if (data_interseccao == dia_transacao):
             informacoes = [(transacao.memo, transacao.trnamt), transacao.fitid]
             infos_transacoes.append(informacoes)
-        elif (data_interseccao < dia_transacao):
-            break
 
     return infos_transacoes
 
@@ -69,6 +68,7 @@ def remove_anteriores(ofx, data_interseccao):
     data_interseccao = datetime.strptime(data_interseccao, "%Y-%m-%d")
 
     lista_anteriores = []
+
     # Passa pelas transições anteriores e salva informações
     for transacao in ofx.statements[0].transactions:
         data_transacao = transacao.dtposted.strftime("%Y-%m-%d")
@@ -76,6 +76,7 @@ def remove_anteriores(ofx, data_interseccao):
 
         if (data_transacao < data_interseccao):
             lista_anteriores.append([transacao.checknum, transacao.memo])
+
         elif (data_transacao == data_interseccao):
             print(f'\n{len(lista_anteriores)} transações de dia anteriores removidas\n')
             break
@@ -94,6 +95,7 @@ def remove_anteriores(ofx, data_interseccao):
     return ofx
 
 
+def salvar_ofx(ofx, headers, diretorio, nome=""):
     # Aproxima de XML
     ofx = ofx.to_etree()
     # Converte para bytes
@@ -104,11 +106,44 @@ def remove_anteriores(ofx, data_interseccao):
     # Analisar o arquivo XML
     ofx = xml.dom.minidom.parseString(ofx)
     # Indentar o XML
-    ofx = ofx.toprettyxml(indent="\t")
+    ofx = ofx.toprettyxml(indent="\t")[23:]
     # Adiciona Header
     ofx = headers + ofx
 
     # Salvar o XML indentado em um novo arquivo
-    nome_arq = "\\Extrato Limpo-" + datetime.now().strftime("%m%d%Y%H%M") + ".ofx" 
+    if (nome == ""):
+        nome_arq = "\\OFX Limpo-" + datetime.now().strftime("%d%m%Y%H%M") + ".ofx"
+    else:
+        nome_arq = "\\" + nome
+
     with open(diretorio+nome_arq, 'w') as file:
         file.write(ofx)
+
+    return diretorio+nome_arq
+
+
+def salvar_ofx_geral(ofx, header, diretorio_atual):
+    split_dir_atual = diretorio_atual.split("\\")
+    diretorio_anterior = "\\".join(split_dir_atual[:-1])
+
+    for item in os.listdir(diretorio_anterior):
+        # Procura o arquivo OFX geral com todas as transações do dia
+        if ((".ofx" in item) and (f"OFXGeral-{split_dir_atual[-2]}" in item)):
+            diretorio_arq_ofx = diretorio_anterior + "\\" + item
+            header_geral, ofx_geral = carregar_ofx(diretorio_arq_ofx)
+
+            # Adiciona as novas transaçoes ao arquivo geral de transações
+            ofx_geral = junta_transacoes(ofx_geral, ofx)
+
+            # Salva arquivo atualizado
+            return salvar_ofx(ofx_geral, header_geral, diretorio_anterior, item)
+
+    # Caso não tenho o OFX geral vai criar.
+    return salvar_ofx(ofx, header, diretorio_anterior, f"OFXGeral-{split_dir_atual[-2]}")
+
+
+def junta_transacoes(ofx_geral, ofx_dia):
+    for transacao_nova in ofx_dia.statements[0].transactions:
+        ofx_geral.statements[0].transactions.append(transacao_nova)
+
+    return ofx_geral

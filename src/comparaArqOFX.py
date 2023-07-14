@@ -13,6 +13,7 @@ from controller.ofx_functions import pegar_infos_transacoes
 from controller.ofx_functions import remove_transacao
 from controller.ofx_functions import remove_anteriores
 from controller.ofx_functions import salvar_ofx
+from controller.ofx_functions import salvar_ofx_geral
 
 from colorama import init, Style, Back
 
@@ -70,10 +71,12 @@ for transacao_anterior, _ in inf_transacoes_anterior:
             # Remove transacao do ofx
             ofx_atual = remove_transacao(ofx_atual, identificador)
             transacoes_removidas += 1
+            break
 
 if (transacoes_removidas == len(inf_transacoes_anterior)):
     print(Back.GREEN + f"Transações removidas do ofx atual: {transacoes_removidas}\n" + Style.RESET_ALL)
 else:
-    print(Back.RED + f"Transações removidas do ofx atual: {transacoes_removidas}\n" + Style.RESET_ALL)
+    print(Back.RED + f"Atenção\nTransações removidas do ofx atual: {transacoes_removidas}\n" + Style.RESET_ALL)
 
-salvar_ofx(ofx_atual, header_atual, dir_atual)
+arq_ofx_criado = salvar_ofx(ofx_atual, header_atual, dir_atual)
+salvar_ofx_geral(ofx_atual, header_atual, dir_atual)
