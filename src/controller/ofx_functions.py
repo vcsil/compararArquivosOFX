@@ -139,7 +139,7 @@ def salvar_ofx_geral(ofx, header, diretorio_atual):
             return salvar_ofx(ofx_geral, header_geral, diretorio_anterior, item)
 
     # Caso não tenho o OFX geral vai criar.
-    return salvar_ofx(ofx, header, diretorio_anterior, f"OFXGeral-{split_dir_atual[-2]}")
+    return salvar_ofx(ofx, header, diretorio_anterior, f"OFXGeral-{split_dir_atual[-2]}.ofx")
 
 
 def junta_transacoes(ofx_geral, ofx_dia):
