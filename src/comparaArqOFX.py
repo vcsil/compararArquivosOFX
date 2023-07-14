@@ -80,3 +80,5 @@ else:
 
 arq_ofx_criado = salvar_ofx(ofx_atual, header_atual, dir_atual)
 salvar_ofx_geral(ofx_atual, header_atual, dir_atual)
+
+input("Pressione qualquer tecla para sair.")
