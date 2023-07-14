@@ -8,19 +8,28 @@ Created on Tue Jul  4 17:10:08 2023
 import os
 
 
-def get_name_ofx(diretorio_atual):
-    for item in os.listdir(diretorio_atual):
-        if (".ofx" in item):
-            return diretorio_atual + "\\" + item
+def get_name_ofx(diretorio, nome_arq, verifica_existencia=False):
+    list_dir = os.listdir(diretorio)
 
-    raise FileNotFoundError(f'Ofx não está aqui: {diretorio_atual}')
+    if (verifica_existencia):
+        if (len(list_dir) >= 3):
+            raise FileExistsError(f'Verifique se o arquivo já foi gerado em {diretorio}')
+
+    for item in list_dir:
+        if ((".ofx" in item) and (nome_arq in item)):
+            return diretorio + "\\" + item
+
+    raise FileNotFoundError(f'Ofx "{nome_arq}" não está aqui: {diretorio}')
 
 
-def get_old_directory(diretorio_atual, diretorio_anterior="", nivel=-2):
 def get_old_directory(diretorio_atual, diretorio_anterior="", subiu=False, nivel=-2):
     if (diretorio_anterior == ""):
         split_dir_atual = diretorio_atual.split("\\")
         diretorio_anterior = "\\".join(split_dir_atual[:-1])
+        try:
+            return get_name_ofx(diretorio_anterior, f"OFXGeral-{split_dir_atual[-2]}")
+        except FileNotFoundError:
+            pass
 
     # Analisa os arquivos dentro do diretorio e vê se tem algum ofx
     list_dir_anterior = os.listdir(diretorio_anterior)
@@ -48,4 +57,4 @@ def get_old_directory(diretorio_atual, diretorio_anterior="", subiu=False, nivel
 
     else:
         att_diretorio_anterior = diretorio_anterior + "\\" + list_dir_anterior[nivel]
-        return get_name_ofx(att_diretorio_anterior)
+        return get_name_ofx(att_diretorio_anterior, "Extrato")

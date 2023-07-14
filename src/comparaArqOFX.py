@@ -22,7 +22,7 @@ init()
 dir_atual = define_diretorio()  # os.getcwd()
 
 # Identifica o arquivo ofx no diretório atual
-ofx_atual = get_name_ofx(dir_atual)
+ofx_atual = get_name_ofx(dir_atual, "Extrato", True)
 
 # Vai buscar o arquivo ofx anterior imediado (da ultima data atualiazada)
 ofx_anterior = get_old_directory(dir_atual)
