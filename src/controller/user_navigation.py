@@ -88,7 +88,7 @@ def retorna_diretorio_hoje(inst_financeira):
     mes = data_agora.today().strftime("%m")
     dia = data_agora.today().strftime("%d")
 
-    diretorio = "..\\" + inst_financeira + "\\" + ano + "\\"
+    diretorio = ".\\" + inst_financeira + "\\" + ano + "\\"
     diretorio += mes + " - " + dict_mes[mes] + " " + ano + "\\"
     diretorio += ano + "-" + mes + "-" + dia
 
