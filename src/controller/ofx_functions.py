@@ -10,9 +10,9 @@ from datetime import datetime
 import os
 
 
-def carregar_ofx(ofx_dir):
+def carregar_ofx(ofx_dir, *, codificacao=None):
     with open(ofx_dir, 'rb') as arquivo_ofx:
-        formato, headers, corpo = preparar_ofx(arquivo_ofx.read())
+        formato, headers, corpo = preparar_ofx(arquivo_ofx.read(), codificacao=codificacao)
     ofx = interpretar_ofx(formato, corpo)
     ofx._caminho_origem = os.path.abspath(ofx_dir)
     return headers, ofx

@@ -11,18 +11,24 @@ from ofxtools.Types import DateTime
 
 
 class OFXEncodingWarning(UserWarning):
-    """A codificação declarada é ambígua ou não corresponde ao conteúdo."""
+    """A codificação declarada não corresponde ao conteúdo."""
 
 
-def preparar_ofx(raw):
+class OFXEncodingAmbiguaError(ValueError):
+    """O conteúdo tem interpretações distintas e válidas em UTF-8 e CP1252."""
+
+
+def preparar_ofx(raw, *, codificacao=None):
     """Retorna (formato, cabeçalho, corpo) a partir de bytes originais.
 
-    Para CHARSET 1252, UTF-8 válido e não ASCII tem prioridade com aviso;
-    bytes inválidos em UTF-8 são decodificados estritamente como cp1252.
+    Para CHARSET 1252, aceita escolha explícita 'utf-8' ou 'cp1252'.
+    Sem escolha, rejeita interpretações diferentes igualmente válidas.
     """
     raw = raw.removeprefix(b'\xef\xbb\xbf')
     stripped = raw.lstrip()
     if stripped.startswith(b'<?xml') or stripped.startswith(b'<OFX'):
+        if codificacao is not None:
+            raise ValueError('Escolha de codificação disponível apenas para SGML com CHARSET:1252')
         return 'xml', str(OFXHeaderV2(version=203)), raw
     # Cabeçalhos SGML são ASCII e encerram antes do elemento raiz.
     match = re.search(br'<OFX(?:\s|>)', raw, re.IGNORECASE)
@@ -30,15 +36,32 @@ def preparar_ofx(raw):
         raise ValueError('Cabeçalho ou elemento OFX ausente')
     head, body = raw[:match.start()], raw[match.start():]
     charset = re.search(br'(?im)^\s*CHARSET\s*:\s*([^\s]+)', head)
+    if codificacao not in (None, 'utf-8', 'cp1252'):
+        raise ValueError("codificacao deve ser 'utf-8', 'cp1252' ou None")
+    if codificacao is not None and not (charset and charset.group(1).upper() == b'1252'):
+        raise ValueError('Escolha de codificação disponível apenas para SGML com CHARSET:1252')
     if charset and charset.group(1).upper() == b'1252':
+        try:
+            cp1252 = body.decode('cp1252')
+        except UnicodeDecodeError:
+            cp1252 = None
         try:
             utf8 = body.decode('utf-8')
         except UnicodeDecodeError:
-            pass
-        else:
-            if not utf8.isascii():
-                warnings.warn('CHARSET 1252 e bytes UTF-8 válidos: interpretação UTF-8 escolhida; confirme a origem.', OFXEncodingWarning, stacklevel=2)
-                head = head[:charset.start(1)] + b'NONE' + head[charset.end(1):]
+            utf8 = None
+        if codificacao == 'cp1252':
+            body.decode('cp1252')  # valida sem substituição
+        elif codificacao == 'utf-8':
+            body.decode('utf-8')
+        elif cp1252 is None:
+            if utf8 is None:
+                body.decode('cp1252')  # propaga erro de decodificação
+            codificacao = 'utf-8'
+            warnings.warn('CHARSET 1252 inválido; conteúdo UTF-8 será validado como OFX.', OFXEncodingWarning, stacklevel=2)
+        elif utf8 is not None and utf8 != cp1252:
+            raise OFXEncodingAmbiguaError("CHARSET 1252: UTF-8 e CP1252 são válidos e produzem textos diferentes; informe codificacao='utf-8' ou 'cp1252'.")
+        if codificacao == 'utf-8':
+            head = head[:charset.start(1)] + b'NONE' + head[charset.end(1):]
     header, message = parse_header(io.BytesIO(head + body))
     return 'sgml', str(header).replace('\r\n', '\n'), message
 
