@@ -20,6 +20,7 @@ with tempfile.TemporaryDirectory() as tmp:
     current = remove_anteriores(current, day)
     current = remove_transacao(current, '2')
     assert [t.fitid for t in current.statements[0].transactions] == ['3']
+    (root/'out').mkdir()
     output = salvar_ofx(current, h, str(root/'out'), 'output.ofx')
     _, restored = carregar_ofx(output)
     assert [t.fitid for t in restored.statements[0].transactions] == ['3']
@@ -27,5 +28,5 @@ with tempfile.TemporaryDirectory() as tmp:
     print('PASS: parsing, overlap, filtering, deduplication, serialization/reparse and merging')
     found = get_name_ofx(str(root), 'Extrato')
     assert not Path(found).exists(), 'Update diagnosis: Windows path issue no longer reproduced'
-    assert Path(output).parent != root/'out'
-    print('CONFIRMED REPOSITORY LIMITATION: discovery and save use Windows backslashes on Linux')
+    assert Path(output).parent == root/'out'
+    print('CONFIRMED REPOSITORY LIMITATION: discovery uses Windows backslashes on Linux')

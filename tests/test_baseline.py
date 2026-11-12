@@ -85,6 +85,6 @@ class Baseline(unittest.TestCase):
                 def __exit__(self,*a): return False
                 def write(self, data): raise OSError('simulated')
             with patch('builtins.open',return_value=Broken()):
-                with self.assertRaises(OSError): f.salvar_ofx(parse(fixture([A])),'header',tmp,'history')
+                with self.assertRaises(OSError): f.salvar_ofx(parse(fixture([A])),'header',tmp,'history', _permitir_atualizar_historico=True)
             self.assertEqual(target.read_text(),'original')
 if __name__=='__main__': unittest.main()

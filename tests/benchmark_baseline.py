@@ -26,4 +26,7 @@ for n in (100,1000,10000):
     measure(f'comparação {n} sem correspondências',compare)
 with tempfile.TemporaryDirectory() as tmp:
     o=parse(data)
-    measure('serialização e escrita 1000',lambda:f.salvar_ofx(o,'header',str(Path(tmp)/'out'),'result.ofx'))
+    output_dir = Path(tmp)/'out'
+    output_dir.mkdir()
+    indices = iter(range(10))
+    measure('serialização e escrita 1000',lambda:f.salvar_ofx(o,'header',str(output_dir),f'result-{next(indices)}.ofx'))
