@@ -94,30 +94,28 @@ class Comparacao(unittest.TestCase):
         new=model([tx(2,1,str(i)) for i in range(600)])
         self.assertEqual(analisar(new,old).relatorio.novas.quantidade,200)
     def test_bloqueado_antes_gravacao(self):
-        new=model([tx(2,2,'a')]); old=model([tx(2,1,'a')])
-        with patch('controller.user_navigation.define_diretorio',return_value=r'bank\day\001'), \
-             patch('controller.browse_folders.get_name_ofx',return_value='new'), \
-             patch('controller.browse_folders.get_old_directory',return_value='old'), \
-             patch('controller.ofx_functions.carregar_ofx',side_effect=[('h',new),('h',old)]), \
-             patch('os.listdir',return_value=[]), \
-             patch('controller.ofx_functions.salvar_ofx') as save, \
-             patch('controller.ofx_functions.salvar_ofx_geral') as save_general, \
-             patch('builtins.input',return_value=''), contextlib.redirect_stdout(io.StringIO()):
-            runpy.run_path(str(Path(__file__).resolve().parents[1]/'src'/'comparaArqOFX.py'),run_name='__main__')
-        save.assert_not_called(); save_general.assert_not_called()
+        import tempfile
+        from datetime import date
+        from controller.workflow import planejar
+        from controller.organization import pasta_dia, OrganizacaoError
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); bank=root/'Banco'; bank.mkdir(); day=pasta_dia(bank,date(2023,1,2)); day.mkdir(parents=True)
+            (day/'OFXGeral-2023-01-02.ofx').write_bytes(fixture([tx(2,1,'a')]))
+            current=root/'input.ofx'; current.write_bytes(fixture([tx(2,2,'a')]))
+            with self.assertRaises(OrganizacaoError): planejar(root,bank,current,hoje=date(2023,1,2))
+            self.assertTrue(current.exists()); self.assertFalse((day/'001').exists())
     def test_fluxo_aprovado_envia_somente_movimentos_novos(self):
-        new=model([tx(2,1,'a'),tx(3,-2,'b')]); old=model([tx(2,1,'a')])
-        with patch('controller.user_navigation.define_diretorio',return_value=r'bank\day\001'), \
-             patch('controller.browse_folders.get_name_ofx',return_value='new'), \
-             patch('controller.browse_folders.get_old_directory',return_value='old'), \
-             patch('controller.ofx_functions.carregar_ofx',side_effect=[('h',new),('h',old)]), \
-             patch('os.listdir',return_value=[]), \
-             patch('controller.ofx_functions.salvar_ofx') as save, \
-             patch('controller.ofx_functions.salvar_ofx_geral') as save_general, \
-             patch('builtins.input',return_value=''), contextlib.redirect_stdout(io.StringIO()):
-            runpy.run_path(str(Path(__file__).resolve().parents[1]/'src'/'comparaArqOFX.py'),run_name='__main__')
-        save.assert_called_once(); save_general.assert_called_once()
-        self.assertEqual(ids(save.call_args.args[0]),['b'])
-        self.assertEqual(ids(new),['a','b']); self.assertEqual(ids(old),['a'])
+        import tempfile
+        from datetime import date
+        from controller.workflow import planejar, executar
+        from controller.organization import pasta_dia
+        from controller.ofx_functions import carregar_ofx
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); bank=root/'Banco'; bank.mkdir(); day=pasta_dia(bank,date(2023,1,2)); day.mkdir(parents=True)
+            (day/'OFXGeral-2023-01-02.ofx').write_bytes(fixture([tx(2,1,'a')]))
+            current=root/'input.ofx'; current.write_bytes(fixture([tx(2,1,'a'),tx(3,-2,'b')]))
+            dest=executar(planejar(root,bank,current,hoje=date(2023,1,2)))
+            self.assertEqual(ids(carregar_ofx(dest/'OFX Limpo.ofx')[1]),['b'])
+            self.assertEqual(ids(carregar_ofx(day/'OFXGeral-2023-01-02.ofx')[1]),['a','b'])
 
 if __name__=='__main__': unittest.main()

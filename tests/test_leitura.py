@@ -48,18 +48,13 @@ class Leitura(unittest.TestCase):
         self.assertEqual(carregar_ofx(self.path,codificacao='utf-8')[1].statements[0].transactions[0].memo,'Café')
         self.assertEqual(self.path.read_bytes(),raw)
     def test_fluxo_interativo_nao_grava_ambiguidade(self):
+        from controller.workflow import planejar
+        from controller.ofx_io import OFXEncodingAmbiguaError
         raw=fixture([('20230102120000','20','2','Café')],'utf-8')
-        self.path.write_bytes(raw)
-        with patch('controller.user_navigation.define_diretorio',return_value=str(self.root)), \
-             patch('controller.browse_folders.get_name_ofx',return_value=str(self.path)), \
-             patch('controller.browse_folders.get_old_directory',return_value='nao-lido.ofx'), \
-             patch('controller.ofx_functions.salvar_ofx') as save, \
-             patch('controller.ofx_functions.salvar_ofx_geral') as save_general, \
-             patch('builtins.input',return_value=''), contextlib.redirect_stdout(io.StringIO()):
-            runpy.run_path(str(Path(__file__).resolve().parents[1]/'src'/'comparaArqOFX.py'),run_name='__main__')
-        save.assert_not_called(); save_general.assert_not_called()
+        self.path.write_bytes(raw); bank=self.root/'Banco'; bank.mkdir()
+        with self.assertRaises(OFXEncodingAmbiguaError): planejar(self.root,bank,self.path)
         self.assertEqual(self.path.read_bytes(),raw)
-        self.assertEqual(list(self.root.iterdir()),[self.path])
+        self.assertEqual(list(bank.iterdir()),[])
     def test_invalid_explicit_choice(self):
         self.path.write_bytes(fixture([A]))
         with self.assertRaises(ValueError): carregar_ofx(self.path,codificacao='latin1')
