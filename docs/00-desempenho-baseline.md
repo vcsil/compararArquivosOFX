@@ -1,0 +1,5 @@
+# Desempenho de referência
+
+Ambiente Linux x86-64, Python 3.12.14. O executável Windows PE32+ tem 7.711.392 bytes e contém mensagens PyInstaller; a configuração de build e o modo onefile não foram identificados. Não é possível medir inicialização do executável Windows neste ambiente. Uma execução de `python -X importtime -c 'import colorama, ofxtools.Parser'` registrou 98,458 ms acumulados para `ofxtools.Parser`; é uma única observação, não mediana nem medida do executável. Comparação em 100/1.000/10.000 transações, leitura e serialização ainda não foram cronometradas.
+
+A comparação aninhada e remoção em listas sugerem custo quadrático; isso é análise de código, não benchmark. Para etapa 5 medir no Windows real, com múltiplas execuções e mediana/faixa, separando arranque de processamento. Avaliar importação tardia, Counter para multiplicidades, estruturas indexadas, scandir e pathlib, e comparar PyInstaller e Nuitka por medições; nenhuma ferramenta tem garantia de abertura abaixo de um segundo.

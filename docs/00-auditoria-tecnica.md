@@ -1,0 +1,23 @@
+# Auditoria técnica — referência 3a15c6ae7f1340c9e66763156a1e0b27d5c23cb3
+
+## Arquitetura e fluxo verificado
+
+O script `src/comparaArqOFX.py` executa ao ser importado: pede diretório, encontra Extrato e histórico, lê e ordena transações por DTPOSTED, procura a data da última transação anterior, remove dias anteriores, compara MEMO e valor nessa data, remove correspondências por FITID e grava limpo e geral. A exceção é impressa e aguarda Enter. Não existe validação de conta. `requirements.txt` fixa colorama 0.4.6 e ofxtools 0.9.5; README contém apenas título. `modelo-ofx.txt` é descritivo, não um extrato de teste válido.
+
+## Funções e riscos
+
+- `browse_folders.get_name_ofx(diretorio,nome_arq,verifica_existencia=False)`: lista diretório, devolve caminho da primeira ocorrência contendo nome e `.ofx`; lança FileExistsError com três entradas e FileNotFoundError sem correspondência. Depende de barras invertidas, ordem de listagem e nomes; múltiplas opções são ambíguas. Risco alto.
+- `get_old_directory(diretorio_atual,diretorio_anterior='',subiu=False,nivel=-2)`: busca geral no pai e, falhando, navega recursivamente por índices negativos de `os.listdir`; pode escolher diretório incorreto, lançar IndexError/OSError ou recursar indevidamente. Não ordena cronologicamente. Risco crítico.
+- `carregar_ofx(ofx_dir)`: abre bytes, faz parse/conversão ofxtools e retorna cabeçalho e modelo; erros de leitura, codificação e formato propagam. `pegar_dia_insterseccao(ofx,ultimo_dia_ofx_anterior)` retorna data igual ou lança FileExistsError; com transações vazias retorna None. Não compara intervalos declarados. Risco alto.
+- `pegar_infos_transacoes(ofx,data)` retorna pares [(memo, valor), FITID]; `remove_transacao(ofx,identificador)` remove primeiro FITID igual ou lança ValueError. Descrição/valor iguais com IDs diferentes são indistinguíveis na comparação; IDs repetidos podem remover outra ocorrência. Comparação aninhada e remoções em lista são quadráticas. Risco crítico.
+- `remove_anteriores(ofx,data)` altera modelo e devolve-o, removendo por checknum e memo; pressupõe ordenação e pode selecionar transação errada quando esses campos se repetem. A otimização pressupõe histórico confiável e cronologia válida, não verificadas. Risco crítico.
+- `salvar_ofx(ofx,headers,diretorio,nome='')` serializa etree/minidom, escreve diretamente em modo `w` e devolve caminho; sobrescrita e interrupção podem destruir histórico, usa codificação padrão e cabeçalho original sem reconciliar encoding. `salvar_ofx_geral` procura arquivo no pai por nome contendo data do diretório pai, lê e chama `junta_transacoes`, que acrescenta objetos sem conferir conta, duplicatas, datas ou saldos. Risco crítico.
+- `define_diretorio`, `pergunta_para_usuario`, `define_diretorio_central`, `retorna_diretorio_hoje` fazem entrada interativa, escolhem bancos fixos e constroem caminhos Windows. A seleção da última pasta depende da ordem do sistema; datas usam `today()` mesmo após obter horário com timezone. Erros de diretório e entrada propagam. Risco alto.
+
+## Geral e integridade
+
+Verificado no código: o geral é localizado no pai da importação e leva o nome `OFXGeral-` seguido do nome do pai; caso ausente é criado a partir das transações restantes; caso presente, estas são acrescentadas. A intenção é acumulado diário, mas depende da estrutura de nomes. Não há atualização explícita de DTSTART, DTEND ou saldos ao juntar. Em reprocessamento, a guarda por contagem de arquivos pode impedir execução; se contornada, não existe mecanismo idempotente geral. Na ausência de histórico anterior a busca falha antes da criação inicial. Um número inesperado de transações removidas apenas mostra aviso e não impede a gravação. Nenhuma verificação identifica bancos ou contas diferentes. O original não é explicitamente escrito, mas caminhos e nomes podem causar colisões; gravação não é atômica.
+
+## Codificação
+
+O parser recebe o arquivo em bytes e interpreta seus cabeçalhos; UTF-8 rotulado como 1252 pode falhar ou produzir texto corrompido. A gravação usa `open(..., 'w')` com encoding padrão, enquanto reutiliza o cabeçalho anterior. A consequência é dependente da plataforma e não garante coerência. Uma futura normalização estrita em memória, preservando os bytes originais e verificando MEMO, FITID, TRNAMT e DTPOSTED, deve ser investigada; não usar descarte silencioso de bytes. Os arquivos reais citados não estavam disponíveis. Não foram verificadas experimentalmente todas as variantes XML, fusos ou divergências de codificação.
