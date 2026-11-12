@@ -1,92 +1,58 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Thu Apr 13 11:47:17 2023
+"""Fluxo de terminal existente com comparação validada antes da gravação."""
+import os
+import traceback
 
-@author: vsil
-"""
-
+from colorama import init, Fore, Style
 from controller.browse_folders import get_name_ofx, get_old_directory
 from controller.user_navigation import define_diretorio
-from controller.ofx_functions import carregar_ofx
-from controller.ofx_functions import pegar_dia_insterseccao
-from controller.ofx_functions import pegar_infos_transacoes
-from controller.ofx_functions import remove_transacao
-from controller.ofx_functions import remove_anteriores
-from controller.ofx_functions import salvar_ofx
-from controller.ofx_functions import salvar_ofx_geral
-
-from colorama import init, Style, Back, Fore
-import traceback
+from controller.ofx_functions import carregar_ofx, salvar_ofx, salvar_ofx_geral
+from controller.ofx_comparison import analisar
 
 init()
 
 try:
-    # Pega o diretório atual
-    dir_atual = define_diretorio()  # os.getcwd()
+    dir_atual = define_diretorio()
+    caminho_atual = get_name_ofx(dir_atual, 'Extrato', True)
+    # A busca legada não distingue ausência de histórico de falha de navegação.
+    # Falhas são propagadas: não assumir primeira importação de modo inseguro.
+    caminho_anterior = get_old_directory(dir_atual)
+    header_atual, atual = carregar_ofx(caminho_atual)
+    anterior = carregar_ofx(caminho_anterior)[1] if caminho_anterior else None
 
-    # Identifica o arquivo ofx no diretório atual
-    ofx_atual = get_name_ofx(dir_atual, "Extrato", True)
+    # Se o geral do dia já existe, ele precisa ser o histórico comparado;
+    # caso contrário a escrita legada poderia acrescentar a outro histórico.
+    partes = dir_atual.split('\\')
+    if len(partes) < 2:
+        raise ValueError('Estrutura de diretório incompatível com OFX Geral')
+    pai = '\\'.join(partes[:-1])
+    existentes = [nome for nome in os.listdir(pai)
+                  if '.ofx' in nome and f'OFXGeral-{partes[-2]}' in nome]
+    if len(existentes) > 1:
+        raise ValueError('Mais de um OFX Geral encontrado para o dia')
+    if existentes:
+        alvo = pai + '\\' + existentes[0]
+        if not caminho_anterior or not os.path.samefile(alvo, caminho_anterior):
+            raise ValueError('O OFX Geral do dia não é o histórico comparado')
 
-    # Vai buscar o arquivo ofx anterior imediado (da ultima data atualiazada)
-    ofx_anterior = get_old_directory(dir_atual)
-
-    # Carrega o arquivo OFX atual e ordena as transações pelo dia, crescente
-    header_atual, ofx_atual = carregar_ofx(ofx_atual)
-    ofx_atual.statements[0].transactions.sort(key=lambda x: x.dtposted)
-
-    # Carrega o arquivo OFX anterior e ordena as transações pelo dia, crescente
-    header_anterior, ofx_anterior = carregar_ofx(ofx_anterior)
-    ofx_anterior.statements[0].transactions.sort(key=lambda x: x.dtposted)
-
-    # Pegar o dia na ultima transação do ofx anterior
-    ultimo_dia_ofx_anterior = ofx_anterior.statements[0].transactions[-1]
-    ultimo_dia_ofx_anterior = ultimo_dia_ofx_anterior.dtposted.strftime("%Y-%m-%d")
-
-    # Pegar o dia de intersecção entre os ofx
-    data_interseccao = pegar_dia_insterseccao(ofx_atual, ultimo_dia_ofx_anterior)
-
-    # Removar transações anteriores ao da data de intersecção
-    ofx_atual = remove_anteriores(ofx_atual, data_interseccao)
-
-    # Pegar transações do ofx atual que pertencem a data de intersecção
-    inf_transacoes_atual = pegar_infos_transacoes(ofx_atual, data_interseccao)
-
-    # Pegar transações do ofx anterior que pertencem a data de intersecção
-    inf_transacoes_anterior = pegar_infos_transacoes(ofx_anterior, data_interseccao)
-
-    # Quantidade de transações a mais
-    diferenca_transacoes = len(inf_transacoes_atual) - len(inf_transacoes_anterior)
-
-    print(f"Quantidade da transações ofx anterior (a ser removida): {len(inf_transacoes_anterior)}")
-    print(f"Quantidade da transações ofx atual: {len(inf_transacoes_atual)}\n")
-    print(f"Diferença no total de transações (a ficar): {diferenca_transacoes}\n")
-
-    # Passar por todas as transações do ofx anterior na data de intersecção
-    transacoes_removidas = 0
-    for transacao_anterior, _ in inf_transacoes_anterior:
-
-        for transacao_nova, identificador in inf_transacoes_atual:
-            if (transacao_anterior == transacao_nova):
-                # Remove transacao da array auxiliar
-                inf_transacoes_atual.remove([transacao_nova, identificador])
-
-                # Remove transacao do ofx
-                ofx_atual = remove_transacao(ofx_atual, identificador)
-                transacoes_removidas += 1
-                break
-
-    if (transacoes_removidas == len(inf_transacoes_anterior)):
-        print(Back.GREEN + f"Transações removidas do ofx atual: {transacoes_removidas}\n" + Style.RESET_ALL)
-    else:
-        print(Back.RED + f"Atenção\nTransações removidas do ofx atual: {transacoes_removidas}\n" + Style.RESET_ALL)
-
-    arq_ofx_criado = salvar_ofx(ofx_atual, header_atual, dir_atual)
-    salvar_ofx_geral(ofx_atual, header_atual, dir_atual)
-
-    input(Fore.GREEN + "\nPressione enter para sair." + Style.RESET_ALL)
-
-except Exception as err:
-    print('\n')
-    tb_str = traceback.format_exc()
-    print(tb_str)
-    input(Fore.RED + "\nPressione enter para sair." + Style.RESET_ALL)
+    resultado = analisar(atual, anterior)
+    rel = resultado.relatorio
+    print(f'Situação: {rel.estado}')
+    if rel.conta:
+        print(f'Conta: {rel.conta.mascarada()}')
+    print(f'Referência: {rel.referencia}; original: {rel.original.quantidade}; '
+          f'anteriores: {rel.anteriores.quantidade}; duplicatas: {rel.duplicatas.quantidade}; '
+          f'novas: {rel.novas.quantidade}')
+    print(f'Créditos: {rel.novas.creditos}; débitos: {rel.novas.debitos}; líquido: {rel.novas.liquido}')
+    for aviso in rel.divergencias_memo:
+        print(aviso)
+    if rel.estado == 'BLOQUEADO':
+        raise ValueError(rel.motivo)
+    if rel.estado != 'SEM_NOVIDADES':
+        filtrado = resultado.modelo_filtrado(atual)
+        salvar_ofx(filtrado, header_atual, dir_atual)
+        salvar_ofx_geral(filtrado, header_atual, dir_atual)
+    input(Fore.GREEN + '\nPressione enter para sair.' + Style.RESET_ALL)
+except Exception:
+    print('\n' + traceback.format_exc())
+    input(Fore.RED + '\nPressione enter para sair.' + Style.RESET_ALL)
