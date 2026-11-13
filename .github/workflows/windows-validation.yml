@@ -20,7 +20,16 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install -r requirements.txt
-      - run: python -m unittest discover -s tests -v
+      - name: Python suite with synthetic failure diagnostics
+        shell: bash
+        run: |
+          status=0
+          python -m unittest discover -s tests -v > "$RUNNER_TEMP/compara-tests.log" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/compara-tests.log"
+          if [ "$status" -ne 0 ]; then
+            python -c 'import os,pathlib; p=pathlib.Path(os.environ["RUNNER_TEMP"])/"compara-tests.log"; s="\n".join(p.read_bytes().decode("utf-8",errors="backslashreplace").splitlines()[-120:]); print("::error title=Diagnóstico sintético dos testes::"+s.replace("%","%25").replace("\r","%0D").replace("\n","%0A"))'
+          fi
+          exit "$status"
   pyinstaller:
     needs: tests
     runs-on: windows-latest
