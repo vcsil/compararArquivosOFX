@@ -19,7 +19,11 @@ function Sign-IfRequested { param([string]$Executable)
     if ($SignThumbprint) {
         & (Join-Path $PSScriptRoot 'sign_windows.ps1') -Exe $Executable -CertThumbprint $SignThumbprint
         if (-not $?) { throw 'Assinatura Authenticode falhou.' }
-    } else { Write-Output 'UNSIGNED CANDIDATE: certificado Code Signing nao configurado.' }
+    } else {
+        $Signature = Get-AuthenticodeSignature -LiteralPath $Executable
+        if ($Signature.Status -ne 'NotSigned') { throw "Estado Authenticode inesperado: $($Signature.Status)" }
+        Write-Output 'UNSIGNED CANDIDATE: Authenticode NotSigned; certificado Code Signing nao configurado.'
+    }
 }
 try {
     Set-Location $Repo

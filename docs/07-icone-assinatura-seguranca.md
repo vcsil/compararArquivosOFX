@@ -48,7 +48,7 @@ Não modificar o motor de deduplicação, históricos reais, nem permitir escalo
 
 ## Ícone azul e validação
 
-O executável legado contém um único recurso PNG RGBA de 256 × 256. `scripts/recolor_icon.py` lê o recurso PE com `pefile`, preserva geometria, alfa e pixels neutros, e substitui matizes verdes por azul de matiz 221° (referência #2563EB), mantendo variações de brilho e saturação. Requer `pefile` e `Pillow`; execute `venv/bin/python scripts/recolor_icon.py` na raiz. Foram gerados PNG, comparação visual e ICO com 16, 24, 32, 48, 64, 128 e 256 pixels; os tamanhos menores são reamostrados do único original.
+O executável legado contém um único recurso PNG RGBA de 256 × 256. `scripts/recolor_icon.py` lê o recurso PE com `pefile`, preserva geometria, alfa e pixels neutros, e substitui matizes verdes por azul de matiz 221° (referência #2563EB), mantendo variações de brilho e saturação. Para reproduzir com as versões usadas na geração, instale `pefile==2024.8.26` e `Pillow==13.0.0`; execute `venv/bin/python scripts/recolor_icon.py` na raiz. Foram gerados PNG, comparação visual e ICO com 16, 24, 32, 48, 64, 128 e 256 pixels; os tamanhos menores são reamostrados do único original.
 
 Ambos empacotadores usam `assets/comparaofx-2.0-azul.ico`. `scripts/verify_icon.py` lê os recursos PE e compara imagens e alfa com cada resolução do ICO, antes do smoke financeiro e da assinatura opcional. O build instala `pefile==2024.8.26` e `Pillow==11.3.0` para essa inspeção. A compilação normal permanece sem certificado e os candidatos são não assinados.
 
@@ -57,3 +57,5 @@ A detecção anterior `Program:Win32/Contebrew.A!ml` não foi esclarecida. Não 
 O build consulta o estado do Defender no Windows e, quando ativo, tenta atualizar as assinaturas e executar verificação individual antes do smoke. A versão e data das definições são registradas; uma detecção associada ao arquivo bloqueia o build. Se o serviço não estiver disponível, isso é registrado como não verificado. Não são criadas exclusões nem alterada a política do antivírus.
 
 A revisão estática da aplicação não identificou comandos externos, persistência ou comunicação de rede. Os subprocessos encontrados executam candidatos sintéticos nos scripts de teste; a compilação instala dependências do PyPI e Nuitka pode baixar ferramentas adicionais. `colorama` e `ofxtools` estão fixados; dependências transitivas e imagens de CI não são fixadas por hash. Essa revisão não verifica a integridade de todos os artefatos de terceiros nem prova a segurança dos executáveis.
+
+Sem certificado, o build exige que `Get-AuthenticodeSignature` retorne `NotSigned`; com certificado configurado, o script opcional valida a assinatura.
