@@ -35,3 +35,5 @@ histórico com 20 dias: mediana=1.363 min=1.229 max=1.858 ms n=10
 processo Python até primeiro menu: mediana=19.526 min=17.751 max=24.973 ms n=10
 primeira importação 100 transações: mediana=157.267 min=153.049 max=161.662 ms n=10
 ```
+
+Atualização da Etapa 4: a descrição de gravação direta acima é histórica; consulte `04-integridade-recuperacao.md` para o protocolo atual e suas limitações.

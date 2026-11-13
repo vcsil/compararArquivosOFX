@@ -141,7 +141,7 @@ class Organizacao(unittest.TestCase):
         plan=planejar(self.root,self.bank,src,hoje=D); src.write_bytes(b'alterado')
         with self.assertRaises(OrganizacaoError): executar(plan)
         self.assertEqual(src.read_bytes(),b'alterado'); self.assertFalse(plan.dia.exists())
-    def test_menu_ambiguidade_cancelar_e_escolher(self):
+    def test_menu_ambiguidade_cancelar_e_escolher_repeticao(self):
         from comparaArqOFX import main
         src=self.root/'x.ofx'; raw=fixture([('20261110120000','10','A','Café')],'utf-8'); src.write_bytes(raw)
         choices=iter(['1','0'])
@@ -152,7 +152,7 @@ class Organizacao(unittest.TestCase):
         self.assertFalse(src.exists())
         copies=list(self.bank.rglob('x.ofx')); self.assertEqual(len(copies),1)
         self.assertEqual(copies[0].read_bytes(),raw)
-    def test_sem_novidades_em_dia_posterior_preserva_referencia(self):
+    def test_sem_novidades_em_dia_posterior_preserva_referencia_repeticao(self):
         anterior=self.old(date(2026,11,11),[tx(10,'A')]); src=self.root/'x.ofx'
         src.write_bytes(fixture([tx(10,'A')]))
         plan=planejar(self.root,self.bank,src,hoje=D)
@@ -160,7 +160,7 @@ class Organizacao(unittest.TestCase):
         output=executar(plan)
         self.assertEqual(ids(output/'OFX Limpo.ofx'),[])
         self.assertEqual(ids(plan.geral),['A']); self.assertEqual(ids(anterior),['A'])
-    def test_arquivo_modificado_apos_plano_bloqueia(self):
+    def test_arquivo_modificado_apos_plano_bloqueia_repeticao(self):
         src=self.root/'x.ofx'; src.write_bytes(fixture([tx(10,'A')]))
         plan=planejar(self.root,self.bank,src,hoje=D); src.write_bytes(b'alterado')
         with self.assertRaises(OrganizacaoError): executar(plan)

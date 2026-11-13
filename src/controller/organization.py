@@ -76,6 +76,8 @@ def localizar_historico(banco, hoje):
         rel = root.relative_to(banco)
         parts = rel.parts
         if not parts:
+            if '.comparaofx' in dirs:
+                dirs.remove('.comparaofx')
             if any(Path(f).suffix.casefold() == '.ofx' for f in files):
                 raise OrganizacaoError('OFX fora da estrutura esperada na instituição')
             continue

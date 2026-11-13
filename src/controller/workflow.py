@@ -5,6 +5,7 @@ from pathlib import Path
 import hashlib
 import os
 import shutil
+from . import safe_storage
 
 from .organization import ANEXOS, OrganizacaoError, link_inseguro, pasta_dia, proxima_importacao, localizar_historico
 
@@ -21,6 +22,23 @@ class Plano:
     limpo: bytes
     geral_bytes: bytes | None
     hashes: dict
+    assinatura_limpo: object
+    assinatura_geral: object
+
+
+def _assinatura(modelo):
+    from .ofx_comparison import identificar_conta
+    conta = identificar_conta(modelo)
+    statement = modelo.statements[0]
+    transacoes = statement.transactions
+    periodo = getattr(statement, 'banktranlist', None)
+    ledger = getattr(statement, 'ledgerbal', None)
+    disponivel = getattr(statement, 'availbal', None)
+    saldos = (getattr(periodo, 'dtstart', None), getattr(periodo, 'dtend', None),
+              getattr(ledger, 'balamt', None), getattr(ledger, 'dtasof', None),
+              getattr(disponivel, 'balamt', None), getattr(disponivel, 'dtasof', None))
+    return (conta, saldos, tuple((t.fitid, t.dtposted, t.dtposted.utcoffset(), t.trnamt,
+                          t.trntype, t.memo, t.checknum) for t in transacoes))
 
 
 def _hash(path):
@@ -40,6 +58,7 @@ def planejar(raiz, banco, original, anexos=(), hoje=None, leitor=None):
     hoje = hoje or date.today()
     if link_inseguro(banco) or banco.parent != raiz or not banco.is_dir():
         raise OrganizacaoError('Instituição deve ser uma pasta real diretamente na raiz')
+    safe_storage.exigir_sem_pendencias(banco)
     arquivos = (original, *anexos)
     if any(p.parent != raiz or link_inseguro(p) or not p.is_file() for p in arquivos):
         raise OrganizacaoError('Originais e anexos devem ser arquivos regulares na raiz')
@@ -64,6 +83,7 @@ def planejar(raiz, banco, original, anexos=(), hoje=None, leitor=None):
     if resultado.relatorio.estado == 'BLOQUEADO':
         raise OrganizacaoError(resultado.relatorio.motivo)
     filtrado = resultado.modelo_filtrado(atual)
+    assinatura_limpo = _assinatura(filtrado)
     limpo = serializar_ofx(filtrado)
     dia = pasta_dia(banco, hoje)
     destino = proxima_importacao(dia)
@@ -80,47 +100,109 @@ def planejar(raiz, banco, original, anexos=(), hoje=None, leitor=None):
     if resultado.relatorio.estado == 'SEM_NOVIDADES':
         # Se o dia ainda não tem Geral, preserve a referência anterior.
         geral_bytes = None if historico == geral else serializar_ofx(anterior)
+        assinatura_geral = _assinatura(anterior)
     elif historico == geral:
         copia = interpretar_ofx('xml', serializar_ofx(anterior))
         copia.statements[0].transactions.extend(filtrado.statements[0].transactions)
         geral_bytes = serializar_ofx(copia)
+        assinatura_geral = _assinatura(copia)
     else:
         geral_bytes = limpo
+        assinatura_geral = assinatura_limpo
     if historico:
         hashes[historico] = antes
     return Plano(banco, original, tuple(anexos), dia, destino, geral, historico,
-                 resultado, limpo, geral_bytes, hashes)
+                 resultado, limpo, geral_bytes, hashes, assinatura_limpo, assinatura_geral)
 
 
-def executar(plano):
-    """Grava saídas, copia e verifica originais, então remove cópias da raiz.
-
-    Não é transacional: falhas podem deixar saídas parciais. Etapa 4 tratará
-    substituição atômica, concorrência e recuperação.
-    """
+def executar(plano, *, bloqueio=None):
+    """Publica dados preparados; uma interrupção deixa registro e bloqueia nova operação."""
+    if bloqueio is None:
+        with safe_storage.bloquear(plano.banco) as token:
+            return executar(plano, bloqueio=token)
+    if not safe_storage.bloqueio_valido(bloqueio, plano.banco):
+        raise OrganizacaoError('Bloqueio da instituição não está ativo')
+    from .ofx_functions import carregar_ofx
+    safe_storage.exigir_sem_pendencias(plano.banco)
+    if localizar_historico(plano.banco, date.fromisoformat(plano.dia.name)) != plano.historico:
+        raise OrganizacaoError('Histórico mudou desde o planejamento')
     for p, digest in plano.hashes.items():
-        if link_inseguro(p) or _hash(p) != digest:
+        if link_inseguro(p) or p.stat().st_nlink != 1 or _hash(p) != digest:
             raise OrganizacaoError('Arquivo alterado após validação: ' + p.name)
-    # Recusar qualquer link em componentes de saída, inclusive se introduzido.
     for path in (plano.dia, *plano.dia.parents):
         if path == plano.banco.parent:
             break
         if link_inseguro(path):
             raise OrganizacaoError('Caminho de saída contém link simbólico')
-    plano.dia.mkdir(parents=True, exist_ok=True)
-    plano.importacao.mkdir(exist_ok=False)
-    with (plano.importacao / 'OFX Limpo.ofx').open('xb') as f:
-        f.write(plano.limpo)
+    if plano.importacao.exists() or link_inseguro(plano.importacao):
+        raise OrganizacaoError('Pasta de importação já existe')
+    if plano.historico != plano.geral and (plano.geral.exists() or link_inseguro(plano.geral)):
+        raise OrganizacaoError('Geral de destino surgiu após planejamento')
+    manifest = {
+        'versao': 1, 'estado': 'PREPARANDO',
+        'pasta': str(plano.importacao.relative_to(plano.banco)),
+        'geral': str(plano.geral.relative_to(plano.banco)),
+        'historico': str(plano.historico.relative_to(plano.banco)) if plano.historico else None,
+        'historico_hash': plano.hashes[plano.historico].hex() if plano.historico else None,
+        'geral_hash': hashlib.sha256(plano.geral_bytes).hexdigest() if plano.geral_bytes is not None else plano.hashes[plano.geral].hex(),
+        'limpo_hash': hashlib.sha256(plano.limpo).hexdigest(),
+        'arquivos': [{'nome': p.name, 'sha256': plano.hashes[p].hex()} for p in (plano.original, *plano.anexos)]
+    }
+    op = safe_storage.iniciar(plano.banco, manifest)
+    stage = op / 'pasta'
+    stage.mkdir()
+    safe_storage.escrever(stage / 'OFX Limpo.ofx', plano.limpo)
+    if _hash(stage / 'OFX Limpo.ofx') != hashlib.sha256(plano.limpo).digest() or _assinatura(carregar_ofx(stage / 'OFX Limpo.ofx')[1]) != plano.assinatura_limpo:
+        raise OrganizacaoError('Falha na validação do OFX Limpo preparado')
     for origem in (plano.original, *plano.anexos):
-        destino = plano.importacao / origem.name
+        destino = stage / origem.name
         with origem.open('rb') as src, destino.open('xb') as dst:
-            shutil.copyfileobj(src, dst)
+            shutil.copyfileobj(src, dst); dst.flush(); os.fsync(dst.fileno())
         if _hash(destino) != plano.hashes[origem] or _hash(origem) != plano.hashes[origem]:
             raise OrganizacaoError('Falha na verificação da cópia: ' + origem.name)
+    safe_storage.fsync_dir(stage)
+    temp_geral = op / 'geral.tmp'
     if plano.geral_bytes is not None:
-        modo = 'wb' if plano.historico == plano.geral else 'xb'
-        with plano.geral.open(modo) as f:
-            f.write(plano.geral_bytes)
+        safe_storage.escrever(temp_geral, plano.geral_bytes)
+        if _hash(temp_geral) != hashlib.sha256(plano.geral_bytes).digest() or _assinatura(carregar_ofx(temp_geral)[1]) != plano.assinatura_geral:
+            raise OrganizacaoError('Falha na validação do Geral preparado')
+    manifest['estado'] = 'PREPARADO'
+    safe_storage.atualizar_manifesto(op, manifest)
+    # Revalidar logo antes de publicar: não confiar na verificação inicial.
+    for p, digest in plano.hashes.items():
+        if link_inseguro(p) or p.stat().st_nlink != 1 or _hash(p) != digest:
+            raise OrganizacaoError('Arquivo alterado antes da publicação: ' + p.name)
+    if plano.historico != plano.geral and (plano.geral.exists() or link_inseguro(plano.geral)):
+        raise OrganizacaoError('Geral de destino surgiu após planejamento')
+    manifest['estado'] = 'PUBLICANDO'
+    safe_storage.atualizar_manifesto(op, manifest)
+    plano.dia.mkdir(parents=True, exist_ok=True)
+    safe_storage.publicar_pasta(stage, plano.importacao)
+    manifest['estado'] = 'PASTA_PUBLICADA'
+    safe_storage.atualizar_manifesto(op, manifest)
+    if plano.geral_bytes is not None:
+        if plano.historico == plano.geral and (link_inseguro(plano.geral) or _hash(plano.geral) != plano.hashes[plano.geral]):
+            raise OrganizacaoError('Histórico alterado antes da substituição')
+        safe_storage.publicar_arquivo(temp_geral, plano.geral, plano.historico == plano.geral)
+    if _hash(plano.geral).hex() != manifest['geral_hash']:
+        raise OrganizacaoError('Geral publicado não corresponde ao esperado')
+    manifest['estado'] = 'HISTORICO_ATUALIZADO'
+    safe_storage.atualizar_manifesto(op, manifest)
     for origem in (plano.original, *plano.anexos):
+        arquivo = plano.importacao / origem.name
+        if (link_inseguro(origem) or link_inseguro(arquivo)
+                or origem.stat().st_nlink != 1 or link_inseguro(plano.geral)
+                or _hash(arquivo) != plano.hashes[origem]
+                or _hash(origem) != plano.hashes[origem]
+                or _hash(plano.geral).hex() != manifest['geral_hash']
+                or link_inseguro(plano.importacao / 'OFX Limpo.ofx')
+                or _hash(plano.importacao / 'OFX Limpo.ofx').hex() != manifest['limpo_hash']
+                or (plano.historico and plano.historico != plano.geral
+                    and (link_inseguro(plano.historico) or _hash(plano.historico) != plano.hashes[plano.historico]))):
+            raise OrganizacaoError('Alteração detectada antes da remoção: ' + origem.name)
         origem.unlink()
+        safe_storage.fsync_dir(origem.parent)
+    manifest['estado'] = 'CONCLUIDO'
+    safe_storage.atualizar_manifesto(op, manifest)
+    safe_storage.finalizar(op)
     return plano.importacao

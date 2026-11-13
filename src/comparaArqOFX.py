@@ -3,7 +3,7 @@
 import sys
 import os
 from controller.user_navigation import Cancelado, selecionar
-from controller.organization import raiz_aplicacao
+from controller.organization import raiz_aplicacao, instituicoes
 
 
 def main(raiz=None, entrada=None, saida=None):
@@ -12,9 +12,21 @@ def main(raiz=None, entrada=None, saida=None):
     try:
         raiz = raiz_aplicacao(raiz)
         saida('COMPARAOFX 2.0')
+        from controller.safe_storage import pendencias, bloquear, recuperar_concluida
+        from controller.organization import OrganizacaoError
+        pendencias_nao_resolvidas = False
+        for banco_pendente in instituicoes(raiz):
+            if pendencias(banco_pendente):
+                try:
+                    with bloquear(banco_pendente):
+                        recuperar_concluida(banco_pendente)
+                    saida('Registro concluído recuperado: ' + banco_pendente.name)
+                except OrganizacaoError:
+                    pendencias_nao_resolvidas = True
+                    saida('Operação pendente exige inspeção: ' + banco_pendente.name)
         selecao = selecionar(raiz, entrada, saida)
         if selecao is None:
-            return 0
+            return 1 if pendencias_nao_resolvidas else 0
         banco, arquivo, anexos = selecao
         from controller.ofx_functions import carregar_ofx
         from controller.ofx_io import OFXEncodingAmbiguaError
@@ -33,13 +45,17 @@ def main(raiz=None, entrada=None, saida=None):
                         return carregar_ofx(caminho, codificacao='utf-8' if resposta == '1' else 'cp1252')
                     saida('Entrada inválida.')
 
-        plano = planejar(raiz, banco, arquivo, anexos, leitor=ler)
-        rel = plano.resultado.relatorio
-        saida(f'{rel.estado}: originais {rel.original.quantidade}; anteriores {rel.anteriores.quantidade}; duplicatas {rel.duplicatas.quantidade}; novas {rel.novas.quantidade}')
-        saida(f'Créditos {rel.novas.creditos}; débitos {rel.novas.debitos}; líquido {rel.novas.liquido}')
-        for aviso in rel.divergencias_memo:
-            saida(aviso)
-        destino = executar(plano)
+        from controller.safe_storage import bloquear, exigir_sem_pendencias, recuperar_concluida
+        with bloquear(banco) as token:
+            recuperar_concluida(banco)
+            exigir_sem_pendencias(banco)
+            plano = planejar(raiz, banco, arquivo, anexos, leitor=ler)
+            rel = plano.resultado.relatorio
+            saida(f'{rel.estado}: originais {rel.original.quantidade}; anteriores {rel.anteriores.quantidade}; duplicatas {rel.duplicatas.quantidade}; novas {rel.novas.quantidade}')
+            saida(f'Créditos {rel.novas.creditos}; débitos {rel.novas.debitos}; líquido {rel.novas.liquido}')
+            for aviso in rel.divergencias_memo:
+                saida(aviso)
+            destino = executar(plano, bloqueio=token)
         saida(f'Arquivos organizados em: {destino}')
         return 0
     except Cancelado:
