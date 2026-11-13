@@ -56,7 +56,7 @@ jobs:
           $processing | Write-Output
           $file = Get-Item -LiteralPath $exe
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash
-          $report = @("candidato=PyInstaller onefile; smoke=PASS; bytes=$($file.Length); MiB=$($file.Length / 1MB); SHA256=$hash; commit=$env:GITHUB_SHA; imagem=$env:ImageOS/$env:ImageVersion", $startup, $processing) -join "`n"
+          $report = (@("candidato=PyInstaller onefile; smoke=PASS; bytes=$($file.Length); MiB=$($file.Length / 1MB); SHA256=$hash; commit=$env:GITHUB_SHA; imagem=$env:ImageOS/$env:ImageVersion") + @($startup) + @($processing)) -join "`n"
           $report | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
           $escaped = $report.Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
           Write-Output "::notice title=Resultado sintético PyInstaller::$escaped"
@@ -88,26 +88,31 @@ jobs:
             Write-Output "::error title=Diagnóstico sintético do build::$message"
             throw
           }
-      - name: Benchmark Nuitka onefile
+      - name: Benchmark Nuitka standalone and onefile
         shell: pwsh
         run: |
-          $exe = "$env:RUNNER_TEMP/codex-nuitka/onefile/ComparaOFX.exe"
-          $startup = & ./scripts/benchmark_windows.ps1 -Exe $exe -Runs 15
-          $startup | Write-Output
-          python -m pip install -r requirements.txt
-          if ($LASTEXITCODE -ne 0) { throw 'Instalação do benchmark falhou.' }
-          $processing = & python scripts/benchmark_exe_processing.py $exe
-          if ($LASTEXITCODE -ne 0) { throw 'Benchmark de processamento falhou.' }
-          $processing | Write-Output
-          $file = Get-Item -LiteralPath $exe
-          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash
-          $report = @("candidato=Nuitka onefile; smoke=PASS; bytes=$($file.Length); MiB=$($file.Length / 1MB); SHA256=$hash; commit=$env:GITHUB_SHA; imagem=$env:ImageOS/$env:ImageVersion", $startup, $processing) -join "`n"
-          $report | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
-          $escaped = $report.Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
-          Write-Output "::notice title=Resultado sintético Nuitka::$escaped"
+          foreach ($variant in @('standalone', 'onefile')) {
+            $relative = if ($variant -eq 'standalone') { 'standalone/comparaArqOFX.dist/comparaArqOFX.exe' } else { 'onefile/ComparaOFX.exe' }
+            $exe = "$env:RUNNER_TEMP/codex-nuitka/$relative"
+            $startup = & ./scripts/benchmark_windows.ps1 -Exe $exe -Runs 15
+            $startup | Write-Output
+            python -m pip install -r requirements.txt
+            if ($LASTEXITCODE -ne 0) { throw 'Instalação do benchmark falhou.' }
+            $processing = & python scripts/benchmark_exe_processing.py $exe
+            if ($LASTEXITCODE -ne 0) { throw 'Benchmark de processamento falhou.' }
+            $processing | Write-Output
+            $file = Get-Item -LiteralPath $exe
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash
+            $report = (@("candidato=Nuitka $variant; smoke=PASS; bytes=$($file.Length); MiB=$($file.Length / 1MB); SHA256=$hash; commit=$env:GITHUB_SHA; imagem=$env:ImageOS/$env:ImageVersion") + @($startup) + @($processing)) -join "`n"
+            $report | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+            $escaped = $report.Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
+            Write-Output "::notice title=Resultado sintético Nuitka ${variant}::$escaped"
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: comparaofx-nuitka-candidate
-          path: ${{ runner.temp }}/codex-nuitka/onefile/ComparaOFX.exe
+          path: |
+            ${{ runner.temp }}/codex-nuitka/onefile/ComparaOFX.exe
+            ${{ runner.temp }}/codex-nuitka/standalone/comparaArqOFX.dist/
           if-no-files-found: error
           retention-days: 7

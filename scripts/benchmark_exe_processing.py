@@ -22,7 +22,11 @@ def main():
             with tempfile.TemporaryDirectory(prefix='Compara ofx ') as tmp:
                 import shutil
                 root=Path(tmp)/'Execução com acento'; root.mkdir()
-                exe=root/executable.name; shutil.copy2(executable,exe)
+                exe=root/executable.name
+                if executable.parent.name.endswith('.dist'):
+                    shutil.copytree(executable.parent, root, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(executable,exe)
                 bank=root/'Banco sintetico'; bank.mkdir()
                 src=root/'entrada.ofx'; src.write_bytes(data)
                 start=time.perf_counter_ns()

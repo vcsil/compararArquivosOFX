@@ -68,6 +68,21 @@ class Caminhos(unittest.TestCase):
             with patch('sys.frozen',True,create=True), patch('sys.executable',str(exe)):
                 self.assertTrue(raiz_aplicacao().samefile(self.root))
         finally: os.chdir(cwd)
+    def test_raiz_nuitka_independe_extracao_e_cwd(self):
+        from types import SimpleNamespace
+        from controller import organization
+        extracted = self.root / 'extracao'; extracted.mkdir()
+        cwd = Path.cwd()
+        try:
+            os.chdir(self.root.parent)
+            with patch.dict(organization.__dict__, {'__compiled__': SimpleNamespace(containing_dir=str(self.root))}), \
+                 patch.object(sys, 'executable', str(extracted / 'interno.exe')), \
+                 patch.object(organization, '__file__', str(extracted / 'controller' / 'organization.py')):
+                self.assertTrue(raiz_aplicacao().samefile(self.root))
+                self.assertTrue(raiz_aplicacao(extracted).samefile(extracted))
+        finally:
+            os.chdir(cwd)
+
     @unittest.skipUnless(os.name=='nt','nomes curtos 8.3 e capitalização exigem Windows nativo')
     def test_windows_nome_curto_e_longo_mesma_identidade(self):
         import ctypes

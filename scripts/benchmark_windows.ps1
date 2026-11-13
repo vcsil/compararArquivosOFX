@@ -5,7 +5,11 @@ $root=Join-Path $env:TEMP ('compara-benchmark-'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $root | Out-Null
 try {
     $candidate=Join-Path $root ([IO.Path]::GetFileName($resolved))
-    Copy-Item -LiteralPath $resolved -Destination $candidate
+    if ((Split-Path -Leaf (Split-Path -Parent $resolved)).EndsWith('.dist')) {
+        Get-ChildItem -LiteralPath (Split-Path -Parent $resolved) -Force | Copy-Item -Destination $root -Recurse
+    } else {
+        Copy-Item -LiteralPath $resolved -Destination $candidate
+    }
     New-Item -ItemType Directory -Path (Join-Path $root 'Banco Sintetico') | Out-Null
     Set-Content -LiteralPath (Join-Path $root 'entrada.ofx') -Value 'sintetico: somente menu' -Encoding Ascii
     $samples=@(); $exits=@()

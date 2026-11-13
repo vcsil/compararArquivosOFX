@@ -17,6 +17,11 @@ class OrganizacaoError(ValueError):
 def raiz_aplicacao(raiz=None):
     if raiz is not None:
         return Path(raiz).resolve(strict=True)
+    # Nuitka does not set sys.frozen. containing_dir points beside the
+    # original binary in both standalone and onefile mode, outside extraction.
+    compiled = globals().get('__compiled__')
+    if compiled is not None:
+        return Path(compiled.containing_dir).resolve(strict=True)
     if getattr(sys, 'frozen', False):
         return Path(sys.executable).resolve(strict=True).parent
     return Path(__file__).resolve().parents[2]

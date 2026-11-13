@@ -40,3 +40,11 @@ Validação local: Python 3.12.14/Linux, suíte completa com 124 testes, quatro 
 O commit de correção é `e2f86df`; a execução [43404969285](https://github.com/vcsil/compararArquivosOFX/actions/runs/43404969285) confirmou os testes Linux e Windows. Em seguida foi acrescentada regressão para a entrada binária dos dois scripts, usando subprocesso real (125 testes locais, quatro ignorados e sete falhas esperadas). O workflow publica tamanho, SHA-256, imagem do runner e benchmarks em resumo e anotação pública somente após sucesso do smoke e dos benchmarks, permitindo avaliar resultados mesmo quando a API autenticada retorna `Forbidden`.
 
 Os dois scripts foram exercitados em Linux com um lançador temporário da aplicação Python, sem simular um executável congelado: smoke aprovado e processamento aprovado com 100/1.000/10.000 transações. Isso valida os scripts, mas não substitui a execução dos candidatos Windows e não entra na comparação de desempenho dos empacotadores.
+
+### Raiz Nuitka e distribuição standalone
+
+A documentação oficial incluída no pacote Nuitka 2.5.9 (`README.rst`, seções “Detecting Nuitka at run time” e “Onefile: Finding files”) confirma que Nuitka não define `sys.frozen`. A detecção passa a usar `__compiled__.containing_dir`, válido para standalone e onefile, antes da detecção PyInstaller existente. O teste cobre raiz externa à extração, diretório de trabalho diferente e prioridade da raiz explicitamente fornecida. Não altera planejamento, deduplicação ou publicação financeira.
+
+Os benchmarks também copiam a distribuição completa quando o candidato está em `.dist`, preservando bibliotecas auxiliares. O workflow mede standalone e onefile separadamente e disponibiliza ambos como artefatos de teste, sem release. O conjunto local passou com 126 testes, quatro ignorados por plataforma e sete falhas esperadas.
+
+Validação adicional: YAML carregado e todos os scripts/blocos PowerShell analisados pelo parser real PowerShell 7.4.6 em Linux, obtido da distribuição oficial com SHA-256 verificado. Essa análise verifica sintaxe, não substitui a execução nativa Windows.
