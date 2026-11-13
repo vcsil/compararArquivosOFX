@@ -1,3 +1,5 @@
+> Para o release candidate com a nomenclatura restaurada e manifestos v2, consulte [Validação final — Etapa 6](06-validacao-final.md). Os hashes e medições da Etapa 5 abaixo são históricos e não identificam o executável corrigido.
+
 # Executável Windows — Etapa 5
 
 **Retomada com validação nativa no GitHub Actions.** O workspace local é Linux; os executáveis Windows são construídos e executados nos runners nativos. PyInstaller onefile, Nuitka standalone e Nuitka onefile passaram nos testes nativos; a comparação no mesmo runner e os hashes estão registrados ao final deste documento. O executável legado `dist/Compara OFX.exe` permanece intacto. Não foi criada release final.
@@ -118,3 +120,17 @@ A validação automatizada da Etapa 5 está aprovada. A conclusão integral perm
 Para essa homologação, baixe `comparaofx-nuitka-candidate` na execução acima e separe `onefile/ComparaOFX.exe`. Em uma pasta de teste com espaços/acentos, coloque o EXE, uma cópia de `tests/fixtures/windows-manual/Entrada.ofx` e uma pasta vazia `Banco Sintetico`. Use somente esse extrato sintético. Confira o SHA-256 do EXE da tabela. Abra primeiro por duplo clique e cancele com `0`; depois inicie a partir de outro diretório e selecione `1`. Confirme que o Limpo e o Geral contêm o crédito de BRL 20 com FITID `SYNTH-1`, e que a cópia arquivada tem o mesmo SHA-256 da entrada sintética, registrada antes da execução. O terminal deve continuar visível após o processamento interativo. Registre versão do Windows, resultados e qualquer alerta de execução. Nenhuma instalação de Python deve ser necessária nesse computador.
 
 Commits de implementação publicados diretamente em `codex/comparaofx-2.0-etapa5`: `e2f86df` (volumes e stdin), `64b92e8` (regressão e métricas), `c2c981e` (primeira detecção Nuitka e standalone), `0d3af87` (smoke financeiro), `350b737` (raiz Nuitka corrigida após evidência nativa) e `e41d639` (comparação no mesmo runner). O commit documental final usa `[skip ci]` para não reconstruir binários cuja fonte não mudou; os resultados acima se referem explicitamente a `e41d639`. A Etapa 6 não foi iniciada.
+
+## Release candidate corrigido — Etapa 6
+
+A execução [43413157659](https://github.com/vcsil/compararArquivosOFX/actions/runs/43413157659), commit `116b6e7`, aprovou testes Linux/Windows, os três builds e a comparação no mesmo runner. O smoke exige `OFX Limpo-DDMMAAAAHHMM.ofx`, horário local da geração e recuperação de manifestos v1 e v2 sem alteração de nomes ou bytes já publicados. O formato anterior da Etapa 5 não foi reutilizado como se contivesse a correção.
+
+| Candidato | EXE bytes | EXE MiB | Mediana até o menu (ms) | SHA-256 do EXE |
+|---|---:|---:|---:|---|
+| PyInstaller onefile | 9830401 | 9.375 | 405.969 | `86d35fc456b6e192b3f066be64aedb1d20051c644c8ef30d183b974a1b5881bf` |
+| Nuitka standalone | 12125696 | 11.564 | 35.862 | `32269290dfe96d41180b2f6501b4c70ca6926eeda6c2953bf4723194c9d01c12` |
+| Nuitka onefile | 7933952 | 7.566 | 356.584 | `97a187562f231e839313b50a8a83af946cac2c2b34617ee64ef974ccdf28d1ee` |
+
+Nuitka onefile é o candidato principal para homologação; PyInstaller permanece alternativa. A distribuição standalone completa exige 22 arquivos (27.931.496 bytes). Valores de build separados não foram misturados à comparação: a tabela usa o mesmo runner EPYC 9V45, Python 3.12.10 e imagem `win25-vs2026/20261103.298.1`, com 15 aberturas subsequentes. Primeira abertura, mínimo, máximo, p95, processamento de 100/1.000/10.000 transações, auditoria, compatibilidade e procedimento de homologação estão em [06-validacao-final.md](06-validacao-final.md).
+
+A homologação do EXE novo em Windows sem Python e por duplo clique continua pendente; o usuário confirmou apenas o executável anterior. Nenhuma release definitiva, merge em master ou alteração no executável legado foi realizada.

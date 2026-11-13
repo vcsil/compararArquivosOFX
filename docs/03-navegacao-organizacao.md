@@ -1,6 +1,6 @@
 # Navegação e organização — Etapa 3
 
-Na execução empacotada, a raiz é a pasta real de `sys.executable`, nunca `_MEIPASS` nem o diretório de trabalho; para desenvolvimento e testes `main(raiz=...)` permite definir a raiz. A execução Python normal usa a raiz do repositório. Nenhuma lista de bancos é fixa: pastas imediatas não ocultas são listadas alfabeticamente, exceto diretórios técnicos conhecidos (`src`, `docs`, `tests`, `build`, `dist`, ambientes virtuais e outros enumerados em `organization.py`). O nome da pasta não comprova a conta. Links simbólicos e pontos de reparse são recusados.
+Na execução PyInstaller, a raiz é a pasta real de `sys.executable`; no Nuitka, é a pasta do executável original identificado por `sys.argv[0]`, nunca a extração nem o diretório de trabalho; para desenvolvimento e testes `main(raiz=...)` permite definir a raiz. A execução Python normal usa a raiz do repositório. Nenhuma lista de bancos é fixa: pastas imediatas não ocultas são listadas alfabeticamente, exceto diretórios técnicos conhecidos (`src`, `docs`, `tests`, `build`, `dist`, ambientes virtuais e outros enumerados em `organization.py`). O nome da pasta não comprova a conta. Links simbólicos e pontos de reparse são recusados.
 
 OFX regulares diretamente na raiz são encontrados sem distinguir maiúsculas na extensão; temporários, atalhos e pastas não são selecionados. Um arquivo é selecionado automaticamente; com mais de um, há seleção numérica e cancelamento. Outros OFX ficam na raiz. Anexos elegíveis são PDF, PNG, JPG/JPEG, TIF/TIFF, CSV, XLSX e DOCX. Com um OFX são associados automaticamente e listados; com mais de um, o usuário seleciona números, todos, nenhum ou cancela. Scripts, executáveis, configurações e arquivos de outros tipos não são movidos. Os nomes originais são preservados e colisões não são sobrescritas.
 
@@ -11,8 +11,8 @@ Banco do Brasil/2026/11 - Nov 2026/2026-11-12/
 ├── OFXGeral-2026-11-12.ofx
 ├── 001/Extrato.ofx
 ├── 001/Comprovante.pdf
-├── 001/OFX Limpo.ofx
-└── 002/OFX Limpo.ofx
+├── 001/OFX Limpo-121120260740.ofx
+└── 002/OFX Limpo-121120261415.ofx
 ```
 
 Ano, mês e dia usam a data local do processamento. O próximo número é o maior diretório numérico de três dígitos mais um; lacunas não são reutilizadas e o limite é 999. Históricos são localizados apenas na instituição selecionada, por ano/mês/dia e nome oficial exato, em ordem cronológica. O Geral do dia tem prioridade; caso contrário, usa-se o último anterior. Datas futuras com evidências, pastas inconsistentes, links e evidências sem Geral bloqueiam. Não há fallback para um histórico anterior quando a conta do mais recente não confere. A procura não interpreta todos os arquivos; apenas o selecionado é lido. Por segurança, diretórios inesperados dentro da instituição são rejeitados; organize históricos antigos fora da estrutura oficial separadamente antes de usar este fluxo.
@@ -37,3 +37,7 @@ primeira importação 100 transações: mediana=157.267 min=153.049 max=161.662 
 ```
 
 Atualização da Etapa 4: a descrição de gravação direta acima é histórica; consulte `04-integridade-recuperacao.md` para o protocolo atual e suas limitações.
+
+## Atualização da Etapa 6 — nome do Limpo
+
+Novas importações usam exatamente `OFX Limpo-DDMMAAAAHHMM.ofx`, dentro de sua pasta numerada. O relógio local é consultado uma única vez no planejamento (`relogio` injetável em testes), independentemente da data de uma transação; o nome permanece no plano e no manifesto até a recuperação. O horário é o do início do planejamento, mesmo que a gravação termine no minuto seguinte. Data da hierarquia e nome diário do Geral continuam com a regra anterior. Duas importações no mesmo minuto usam nomes iguais em pastas numeradas diferentes. Colisões dentro da mesma pasta são bloqueadas sem sobrescrita, comparando nomes sem distinguir maiúsculas. Arquivos antigos `OFX Limpo.ofx` não são renomeados. Consulte `06-validacao-final.md` para auditoria e homologação.

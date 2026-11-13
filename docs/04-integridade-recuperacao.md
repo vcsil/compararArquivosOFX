@@ -21,3 +21,16 @@ Links simbólicos, pontos de reparse e hardlinks de entradas são rejeitados nas
 Testes: `venv/bin/python -m unittest discover -s tests -v`. Os testes usam apenas dados sintéticos e incluem interrupções reais com `os._exit`, locks entre processos e falhas injetadas. Os métodos duplicados da Etapa 3 foram renomeados para que todos sejam descobertos. Falhas esperadas da baseline continuam caracterizando funções legadas isoladas; o fluxo principal não usa sua gravação direta.
 
 Atualização da Etapa 5: estados anteriores à publicação são limpos automaticamente somente se pasta final estiver ausente, Geral e histórico continuarem no estado anterior, originais estiverem presentes com hashes originais e cada temporário presente tiver nome e hash esperado. Temporários parciais, arquivos desconhecidos, links, divergências e manifestos ausentes continuam exigindo inspeção; nenhum original é removido nessa limpeza. Essa lógica depende das mesmas garantias e limites de concorrência descritos acima.
+
+## Compatibilidade dos manifestos — Etapa 6
+
+| Versão | Nome do Limpo | Regra de recuperação |
+|---|---|---|
+| 1 | `OFX Limpo.ofx`, implícito | Recuperação legada preservada, sem renomear o arquivo arquivado |
+| 2 | `limpo_nome`, obrigatório | Formato exato `OFX Limpo-DDMMAAAAHHMM.ofx`, data e hora válidas |
+
+Novas operações registram `versao: 2`, `limpo_nome` e `limpo_hash`. O nome é gerado uma vez por planejamento e usado na preparação, releitura, publicação, conferência anterior a cada remoção e recuperação. O SHA-256 hexadecimal de 64 caracteres permanece obrigatório em ambas as versões. Versões desconhecidas, tipos de versão ambíguos, nome ausente, barras, componentes de caminho, controles, dígitos não ASCII, formatos diferentes e datas ou horários impossíveis bloqueiam a recuperação antes de qualquer remoção. Um nome explícito divergente no registro v1 também é recusado.
+
+A limpeza de preparação incompleta e a conclusão após publicação aceitam ambas as versões e mantêm as mesmas exigências de integridade, bloqueio, hashes e presença/ausência dos arquivos. A lista de originais não pode colidir com o nome registrado do Limpo, inclusive por capitalização. Nem o protocolo de atualização atômica do Geral nem a sequência de publicação foram substituídos. Os limites de durabilidade e alterações externas descritos acima continuam aplicáveis.
+
+A versão nova entende registros antigos; o executável antigo não entende manifestos v2. Não faça downgrade com operação v2 pendente. Não há migração automática de históricos nem padronização de nomes antigos. Testes da Etapa 6 cobrem preparação, publicação do Geral, remoção parcial, v1/v2, hashes divergentes e nomes maliciosos. O smoke dos candidatos também prepara registros sintéticos interrompidos e exige que o executável recupere v1 e v2 mantendo nomes e bytes.
