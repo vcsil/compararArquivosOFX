@@ -1,11 +1,12 @@
 """Planejamento e execução de uma importação OFX validada."""
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 import hashlib
 import os
 import shutil
 from . import safe_storage
+from .ofx_names import validar_nome_limpo
 
 from .organization import ANEXOS, OrganizacaoError, caminho_direto, link_inseguro, pasta_dia, proxima_importacao, localizar_historico
 
@@ -24,6 +25,7 @@ class Plano:
     hashes: dict
     assinatura_limpo: object
     assinatura_geral: object
+    limpo_nome: str
 
 
 def _assinatura(modelo):
@@ -49,7 +51,7 @@ def _hash(path):
     return h.digest()
 
 
-def planejar(raiz, banco, original, anexos=(), hoje=None, leitor=None):
+def planejar(raiz, banco, original, anexos=(), hoje=None, leitor=None, relogio=None):
     from .ofx_functions import carregar_ofx
     from .ofx_comparison import analisar
     from .ofx_io import serializar_ofx, interpretar_ofx
@@ -58,19 +60,21 @@ def planejar(raiz, banco, original, anexos=(), hoje=None, leitor=None):
     original = caminho_direto(raiz, original)
     anexos = tuple(caminho_direto(raiz, p) for p in anexos)
     hoje = hoje or date.today()
+    instante = (relogio or datetime.now)()
+    limpo_nome = validar_nome_limpo('OFX Limpo-' + instante.strftime('%d%m%Y%H%M') + '.ofx')
     if not banco.is_dir():
         raise OrganizacaoError('Instituição deve ser uma pasta real diretamente na raiz')
     safe_storage.exigir_sem_pendencias(banco)
     arquivos = (original, *anexos)
     if any(not p.is_file() for p in arquivos):
         raise OrganizacaoError('Originais e anexos devem ser arquivos regulares na raiz')
+    names = [p.name.casefold() for p in arquivos] + [limpo_nome.casefold()]
+    if len(set(names)) != len(names):
+        raise OrganizacaoError('Colisão entre nomes de arquivos de destino')
     if original.suffix.casefold() != '.ofx' or any(p.suffix.casefold() not in ANEXOS for p in anexos):
         raise OrganizacaoError('Tipo de extrato ou anexo não permitido')
     if any(p.stat().st_nlink > 1 for p in arquivos):
         raise OrganizacaoError('Arquivos com múltiplos links físicos não são suportados')
-    names = [p.name.casefold() for p in arquivos] + ['ofx limpo.ofx']
-    if len(set(names)) != len(names):
-        raise OrganizacaoError('Colisão entre nomes de arquivos de destino')
     hashes = {p: _hash(p) for p in arquivos}
     leitor = leitor or carregar_ofx
     _, atual = leitor(original)
@@ -114,7 +118,7 @@ def planejar(raiz, banco, original, anexos=(), hoje=None, leitor=None):
     if historico:
         hashes[historico] = antes
     return Plano(banco, original, tuple(anexos), dia, destino, geral, historico,
-                 resultado, limpo, geral_bytes, hashes, assinatura_limpo, assinatura_geral)
+                 resultado, limpo, geral_bytes, hashes, assinatura_limpo, assinatura_geral, limpo_nome)
 
 
 def executar(plano, *, bloqueio=None):
@@ -140,8 +144,12 @@ def executar(plano, *, bloqueio=None):
         raise OrganizacaoError('Pasta de importação já existe')
     if plano.historico != plano.geral and (plano.geral.exists() or link_inseguro(plano.geral)):
         raise OrganizacaoError('Geral de destino surgiu após planejamento')
+    limpo_nome = validar_nome_limpo(plano.limpo_nome)
+    nomes = [p.name.casefold() for p in (plano.original, *plano.anexos)] + [limpo_nome.casefold()]
+    if len(nomes) != len(set(nomes)):
+        raise OrganizacaoError('Colisão entre nomes de arquivos de destino')
     manifest = {
-        'versao': 1, 'estado': 'PREPARANDO',
+        'versao': 2, 'estado': 'PREPARANDO', 'limpo_nome': limpo_nome,
         'pasta': str(plano.importacao.relative_to(plano.banco)),
         'geral': str(plano.geral.relative_to(plano.banco)),
         'historico': str(plano.historico.relative_to(plano.banco)) if plano.historico else None,
@@ -153,10 +161,10 @@ def executar(plano, *, bloqueio=None):
     op = safe_storage.iniciar(plano.banco, manifest)
     stage = op / 'pasta'
     stage.mkdir()
-    safe_storage.escrever(stage / 'OFX Limpo.ofx', plano.limpo)
-    if _hash(stage / 'OFX Limpo.ofx') != hashlib.sha256(plano.limpo).digest():
+    safe_storage.escrever(stage / limpo_nome, plano.limpo)
+    if _hash(stage / limpo_nome) != hashlib.sha256(plano.limpo).digest():
         raise OrganizacaoError('Falha na validação do OFX Limpo preparado')
-    assinatura_lida = _assinatura(carregar_ofx(stage / 'OFX Limpo.ofx')[1])
+    assinatura_lida = _assinatura(carregar_ofx(stage / limpo_nome)[1])
     if assinatura_lida != plano.assinatura_limpo:
         raise OrganizacaoError('Falha na validação do OFX Limpo preparado')
     for origem in (plano.original, *plano.anexos):
@@ -206,8 +214,8 @@ def executar(plano, *, bloqueio=None):
                 or _hash(arquivo) != plano.hashes[origem]
                 or _hash(origem) != plano.hashes[origem]
                 or _hash(plano.geral).hex() != manifest['geral_hash']
-                or link_inseguro(plano.importacao / 'OFX Limpo.ofx')
-                or _hash(plano.importacao / 'OFX Limpo.ofx').hex() != manifest['limpo_hash']
+                or link_inseguro(plano.importacao / limpo_nome)
+                or _hash(plano.importacao / limpo_nome).hex() != manifest['limpo_hash']
                 or (plano.historico and plano.historico != plano.geral
                     and (link_inseguro(plano.historico) or _hash(plano.historico) != plano.hashes[plano.historico]))):
             raise OrganizacaoError('Alteração detectada antes da remoção: ' + origem.name)

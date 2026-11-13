@@ -10,6 +10,7 @@ import uuid
 from datetime import date
 
 from .organization import OrganizacaoError, link_inseguro
+from .ofx_names import nome_limpo_manifesto
 
 
 _ativos = {}
@@ -127,15 +128,16 @@ def _limpar_preparacao(banco, op, m):
         with path.open('rb') as f:
             for chunk in iter(lambda: f.read(1024 * 1024), b''): h.update(chunk)
         return h.hexdigest()
+    limpo_nome = nome_limpo_manifesto(m)
     arquivos = m['arquivos']
     if not isinstance(arquivos, list) or not arquivos:
         raise ValueError('lista inválida')
     nomes = set()
-    hashes_esperados = {'ofx limpo.ofx': m['limpo_hash']}
+    hashes_esperados = {limpo_nome.casefold(): m['limpo_hash']}
     for i, item in enumerate(arquivos):
         nome = item['nome']
         if (not isinstance(nome, str) or nome in ('', '.', '..') or Path(nome).name != nome
-                or '\\' in nome or nome.casefold() in nomes or nome.casefold() == 'ofx limpo.ofx'):
+                or '\\' in nome or nome.casefold() in nomes or nome.casefold() == limpo_nome.casefold()):
             raise ValueError('nome inválido')
         nomes.add(nome.casefold())
         hashes_esperados[nome.casefold()] = item['sha256']
@@ -168,7 +170,7 @@ def _limpar_preparacao(banco, op, m):
     if stage.exists():
         if link_inseguro(stage) or not stage.is_dir(): raise ValueError('preparação inválida')
         for file in stage.iterdir():
-            if (file.name.casefold() not in nomes | {'ofx limpo.ofx'} or link_inseguro(file)
+            if (file.name.casefold() not in nomes | {limpo_nome.casefold()} or link_inseguro(file)
                     or not file.is_file() or file.stat().st_nlink != 1
                     or sha(file) != hashes_esperados[file.name.casefold()]):
                 raise ValueError('arquivo temporário desconhecido')
@@ -216,10 +218,11 @@ def recuperar_concluida(banco, *, bloqueio=None):
             if link_inseguro(manifest_path) or manifest_path.stat().st_size > 65536:
                 raise ValueError('manifesto inválido')
             m = json.loads(manifest_path.read_text(encoding='utf-8'))
-            if m['versao'] == 1 and m['estado'] in ('PREPARANDO', 'PREPARADO', 'PUBLICANDO'):
+            limpo_nome = nome_limpo_manifesto(m)
+            if m['estado'] in ('PREPARANDO', 'PREPARADO', 'PUBLICANDO'):
                 _limpar_preparacao(banco, op, m)
                 continue
-            if m['versao'] != 1 or m['estado'] not in ('PASTA_PUBLICADA', 'HISTORICO_ATUALIZADO', 'CONCLUIDO'):
+            if m['estado'] not in ('PASTA_PUBLICADA', 'HISTORICO_ATUALIZADO', 'CONCLUIDO'):
                 raise ValueError('operação ainda não concluída')
             if sorted(x.name for x in op.iterdir()) != ['manifesto.json']:
                 raise ValueError('arquivos auxiliares pendentes')
@@ -244,7 +247,7 @@ def recuperar_concluida(banco, *, bloqueio=None):
                 with path.open('rb') as f:
                     for chunk in iter(lambda: f.read(1024 * 1024), b''): h.update(chunk)
                 return h.hexdigest()
-            if link_inseguro(pasta / 'OFX Limpo.ofx') or sha(geral) != m['geral_hash'] or sha(pasta / 'OFX Limpo.ofx') != m['limpo_hash']:
+            if link_inseguro(pasta / limpo_nome) or sha(geral) != m['geral_hash'] or sha(pasta / limpo_nome) != m['limpo_hash']:
                 raise ValueError('hash de saída divergente')
             referencia = None
             if m.get('historico'):
@@ -273,7 +276,7 @@ def recuperar_concluida(banco, *, bloqueio=None):
                 nome = item['nome']
                 if not isinstance(nome, str) or nome in ('', '.', '..') or Path(nome).name != nome or '\\' in nome:
                     raise ValueError('nome de arquivo inválido')
-                if nome.casefold() in vistos or nome.casefold() == 'ofx limpo.ofx':
+                if nome.casefold() in vistos or nome.casefold() == limpo_nome.casefold():
                     raise ValueError('nomes duplicados')
                 vistos.add(nome.casefold())
                 if (idx == 0 and Path(nome).suffix.casefold() != '.ofx') or (idx > 0 and Path(nome).suffix.casefold() not in ANEXOS):
@@ -292,8 +295,8 @@ def recuperar_concluida(banco, *, bloqueio=None):
                         or origem.stat().st_nlink != 1 or link_inseguro(geral)
                         or sha(origem) != digest or sha(copia) != digest
                         or sha(geral) != m['geral_hash']
-                        or link_inseguro(pasta / 'OFX Limpo.ofx')
-                        or sha(pasta / 'OFX Limpo.ofx') != m['limpo_hash']
+                        or link_inseguro(pasta / limpo_nome)
+                        or sha(pasta / limpo_nome) != m['limpo_hash']
                         or (referencia and (link_inseguro(referencia) or sha(referencia) != m['historico_hash']))):
                     raise ValueError('arquivo alterado durante recuperação')
                 origem.unlink()
