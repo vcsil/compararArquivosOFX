@@ -7,7 +7,7 @@ import os
 import shutil
 from . import safe_storage
 
-from .organization import ANEXOS, OrganizacaoError, link_inseguro, pasta_dia, proxima_importacao, localizar_historico
+from .organization import ANEXOS, OrganizacaoError, caminho_direto, link_inseguro, pasta_dia, proxima_importacao, localizar_historico
 
 @dataclass
 class Plano:
@@ -54,13 +54,15 @@ def planejar(raiz, banco, original, anexos=(), hoje=None, leitor=None):
     from .ofx_comparison import analisar
     from .ofx_io import serializar_ofx, interpretar_ofx
     raiz = Path(raiz).resolve(strict=True)
-    banco, original = Path(banco), Path(original)
+    banco = caminho_direto(raiz, banco)
+    original = caminho_direto(raiz, original)
+    anexos = tuple(caminho_direto(raiz, p) for p in anexos)
     hoje = hoje or date.today()
-    if link_inseguro(banco) or banco.parent != raiz or not banco.is_dir():
+    if not banco.is_dir():
         raise OrganizacaoError('Instituição deve ser uma pasta real diretamente na raiz')
     safe_storage.exigir_sem_pendencias(banco)
     arquivos = (original, *anexos)
-    if any(p.parent != raiz or link_inseguro(p) or not p.is_file() for p in arquivos):
+    if any(not p.is_file() for p in arquivos):
         raise OrganizacaoError('Originais e anexos devem ser arquivos regulares na raiz')
     if original.suffix.casefold() != '.ofx' or any(p.suffix.casefold() not in ANEXOS for p in anexos):
         raise OrganizacaoError('Tipo de extrato ou anexo não permitido')

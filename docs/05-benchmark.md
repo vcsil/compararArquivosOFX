@@ -68,3 +68,7 @@ Na Etapa 4, nas mesmas categorias de primeira importação e em outra execução
 A Etapa 4 documenta separadamente hashes, sincronização e publicação. Não há medições de inicialização do empacotador, de candidatos Windows, de processamento Windows em duplicatas ou de cache; elas não foram estimadas. `scripts/benchmark_windows.ps1` fornece a coleta do menu para candidatos onefile depois de construídos. A primeira amostra não garante cache frio. Medidas detalhadas restantes e comparação de empacotadores dependem da validação nativa.
 
 Após a publicação da branch, a consulta ao histórico de execuções do GitHub Actions retornou `Forbidden` nesta sessão. Portanto não há identificador de execução, logs ou medições de runner para registrar aqui.
+
+## Revisão 5.1
+
+As execuções Windows anteriores falharam e os jobs de build foram ignorados; consulte `05-executavel-windows.md`. A revisão acrescenta coleta no workflow para os dois onefile após build: menu completo com 15 amostras subsequentes, e processamento sintético de 100, 1.000 e 10.000 transações. Não há resultados Windows novos confirmados neste relatório. O tempo de processamento medido pelo script inclui arranque do processo e usa três amostras para 100/1.000, uma para 10.000; não deve ser confundido com o tempo isolado do motor ou com teste frio.

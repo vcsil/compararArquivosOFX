@@ -31,6 +31,26 @@ def link_inseguro(path):
                                      & getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0)))
 
 
+def caminho_direto(raiz, caminho):
+    """Valida links antes de normalizar e exige que o pai seja a raiz real.
+
+    samefile compara identidade no sistema, inclusive nomes curtos Windows;
+    construir a partir da raiz validada evita continuar usando um alias externo.
+    """
+    caminho = Path(caminho).absolute()
+    if link_inseguro(caminho) or link_inseguro(caminho.parent):
+        raise OrganizacaoError('Links ou pontos de reparse não são permitidos')
+    try:
+        if not os.path.samefile(caminho.parent, raiz):
+            raise OrganizacaoError('Caminho não pertence diretamente à raiz')
+        normalizado = (raiz / caminho.name).resolve(strict=True)
+        if not os.path.samefile(normalizado.parent, raiz):
+            raise OrganizacaoError('Caminho resolvido fora da raiz')
+        return normalizado
+    except OSError as exc:
+        raise OrganizacaoError('Não foi possível verificar a identidade do caminho') from exc
+
+
 def _regular(path):
     return not link_inseguro(path) and path.is_file()
 

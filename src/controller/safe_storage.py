@@ -29,9 +29,10 @@ def bloqueio_valido(token, banco):
 
 @contextlib.contextmanager
 def bloquear(banco):
-    banco = Path(banco)
-    if link_inseguro(banco) or not banco.is_dir():
+    banco = Path(banco).absolute()
+    if link_inseguro(banco) or link_inseguro(banco.parent) or not banco.is_dir():
         raise OrganizacaoError('Instituição inválida para bloqueio')
+    banco = banco.resolve(strict=True)
     locks = banco.parent / '.comparaofx-locks'
     if link_inseguro(locks):
         raise OrganizacaoError('Pasta de bloqueios insegura')
@@ -195,7 +196,10 @@ def recuperar_concluida(banco, *, bloqueio=None):
 
     Adquire o bloqueio quando necessário. Não remove cópias arquivadas.
     """
-    banco = Path(banco)
+    banco = Path(banco).absolute()
+    if link_inseguro(banco) or link_inseguro(banco.parent):
+        raise OrganizacaoError('Instituição inválida para recuperação')
+    banco = banco.resolve(strict=True)
     if bloqueio is None:
         bloqueio = next((item[0] for item in list(_ativos.values())
                          if bloqueio_valido(item[0], banco)), None)

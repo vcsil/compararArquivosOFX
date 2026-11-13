@@ -210,8 +210,9 @@ class Seguranca(unittest.TestCase):
     def test_recuperacao_apos_remocao_parcial(self):
         plan=self.plan(); unlink=Path.unlink
         def crash(path,*args,**kwargs):
+            is_source=path.exists() and path.samefile(self.src)
             result=unlink(path,*args,**kwargs)
-            if path == self.src: raise OSError('interrupção após remover origem')
+            if is_source: raise OSError('interrupção após remover origem')
             return result
         with patch.object(Path,'unlink',crash):
             with self.assertRaises(OSError): executar(plan)
@@ -344,8 +345,9 @@ elif target=='fim':
 elif target=='parcial':
  old=Path.unlink
  def stop(path,*args,**kwargs):
+  is_source=path.exists() and path.samefile(root/'atual.ofx')
   result=old(path,*args,**kwargs)
-  if path==root/'atual.ofx': os._exit(74)
+  if is_source: os._exit(74)
   return result
  Path.unlink=stop
 executar(p)
@@ -356,7 +358,7 @@ executar(p)
                 root=Path(tmp); bank=root/'Banco'; bank.mkdir(); (root/'atual.ofx').write_bytes(self.raw); (root/'anexo.pdf').write_bytes(b'PDF sintetico')
                 day=pasta_dia(bank,D); day.mkdir(parents=True); general=day/f'OFXGeral-{D.isoformat()}.ofx'; general.write_bytes(self.old)
                 proc=subprocess.run([sys.executable,'-c',script,str(root),target],env={**os.environ,'PYTHONPATH':str(Path(__file__).resolve().parents[1]/'src')},capture_output=True)
-                self.assertEqual(proc.returncode,{'preparado':70,'pasta':71,'geral':72,'fim':73,'parcial':74}[target],proc.stderr.decode())
+                self.assertEqual(proc.returncode,{'preparado':70,'pasta':71,'geral':72,'fim':73,'parcial':74}[target],proc.stderr.decode(errors='backslashreplace'))
                 if target=='preparado':
                     self.assertFalse((day/'001').exists())
                 else:

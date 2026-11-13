@@ -48,7 +48,7 @@ class Organizacao(unittest.TestCase):
         self.assertEqual(plan.resultado.relatorio.estado,'PRIMEIRA_IMPORTACAO')
         self.assertEqual(list(self.bank.iterdir()),[])
         dest=executar(plan)
-        self.assertEqual(dest,pasta_dia(self.bank,D)/'001')
+        self.assertTrue(dest.samefile(pasta_dia(self.bank,D)/'001'))
         self.assertEqual((dest/'Extrato.ofx').read_bytes(),raw)
         self.assertEqual((dest/'anexo.pdf').read_bytes(),b'documento sintetico')
         self.assertFalse(source.exists()); self.assertEqual(ids(dest/'OFX Limpo.ofx'),['A','B'])
@@ -173,7 +173,7 @@ class Organizacao(unittest.TestCase):
     def test_raiz_frozen_nao_cwd(self):
         with patch('sys.frozen',True,create=True), patch('sys.executable',str(self.root/'app.exe')):
             (self.root/'app.exe').write_bytes(b'x')
-            self.assertEqual(raiz_aplicacao(),self.root)
+            self.assertTrue(raiz_aplicacao().samefile(self.root))
     def test_symlink_recusado(self):
         with tempfile.TemporaryDirectory() as outside:
             try: (self.bank/'2026').symlink_to(outside,target_is_directory=True)

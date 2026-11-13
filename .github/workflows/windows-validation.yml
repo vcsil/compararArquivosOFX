@@ -33,6 +33,12 @@ jobs:
       - name: Build and smoke test PyInstaller
         shell: pwsh
         run: ./scripts/build_windows.ps1 -Tool pyinstaller -OutputDir "$env:RUNNER_TEMP/codex-pyinstaller"
+      - name: Benchmark PyInstaller onefile
+        shell: pwsh
+        run: |
+          ./scripts/benchmark_windows.ps1 -Exe "$env:RUNNER_TEMP/codex-pyinstaller/ComparaOFX.exe" -Runs 15
+          python -m pip install -r requirements.txt
+          python scripts/benchmark_exe_processing.py "$env:RUNNER_TEMP/codex-pyinstaller/ComparaOFX.exe"
       - uses: actions/upload-artifact@v4
         with:
           name: comparaofx-pyinstaller-candidate
@@ -51,6 +57,12 @@ jobs:
       - name: Build and smoke test Nuitka standalone and onefile
         shell: pwsh
         run: ./scripts/build_windows.ps1 -Tool nuitka -OutputDir "$env:RUNNER_TEMP/codex-nuitka"
+      - name: Benchmark Nuitka onefile
+        shell: pwsh
+        run: |
+          ./scripts/benchmark_windows.ps1 -Exe "$env:RUNNER_TEMP/codex-nuitka/onefile/ComparaOFX.exe" -Runs 15
+          python -m pip install -r requirements.txt
+          python scripts/benchmark_exe_processing.py "$env:RUNNER_TEMP/codex-nuitka/onefile/ComparaOFX.exe"
       - uses: actions/upload-artifact@v4
         with:
           name: comparaofx-nuitka-candidate
