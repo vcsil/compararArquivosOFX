@@ -1,5 +1,8 @@
 """Inventory packaged modules and fail closed on project test modules."""
 import argparse
+import base64
+import gzip
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -56,7 +59,8 @@ def main():
     bad = sorted(set(name for name in names if forbidden(name)))
     result['project_test_or_tool_entries'] = bad
     result['notable_modules'] = sorted(name for name in result['modules'] if name.split('.')[0] in ('unittest', 'pytest', 'PIL', 'pefile', 'ofxtools', 'controller'))
-    args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    serialized = (json.dumps(result, ensure_ascii=False, indent=2) + '\n').encode('utf-8')
+    args.output.write_bytes(serialized)
     print(f"Inventory: {args.format}, {len(result['modules'])} modules, forbidden={bad}")
     def present(prefix):
         for name in names:
@@ -66,6 +70,12 @@ def main():
         return False
     summary = ', '.join(f'{name}={present(name)}' for name in ('unittest', 'pytest', 'PIL', 'pefile', 'test_baseline'))
     print(f'::notice title=Auditoria de empacotamento {args.format}::{len(result["modules"])} modulos; {summary}; testes proprios={len(bad)}')
+    payload = base64.b64encode(gzip.compress(serialized, mtime=0)).decode('ascii')
+    chunks = [payload[i:i+2000] for i in range(0, len(payload), 2000)]
+    digest = hashlib.sha256(serialized).hexdigest()
+    label = args.input.parent.name if args.format == 'nuitka' else 'onefile'
+    for index, chunk in enumerate(chunks, 1):
+        print(f'::notice title=Inventario {args.format} {label} {index}/{len(chunks)} sha256={digest}::{chunk}')
     if bad:
         raise SystemExit('Project test or tool module included in packaged application')
 
