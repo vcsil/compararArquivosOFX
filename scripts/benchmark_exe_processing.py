@@ -26,7 +26,7 @@ def main():
                 bank=root/'Banco sintetico'; bank.mkdir()
                 src=root/'entrada.ofx'; src.write_bytes(data)
                 start=time.perf_counter_ns()
-                proc=subprocess.run([str(exe)],cwd=Path(tmp),input='1\n',capture_output=True,timeout=300)
+                proc=subprocess.run([str(exe)],cwd=Path(tmp),input=b'1\n',capture_output=True,timeout=300)
                 elapsed=(time.perf_counter_ns()-start)/1e6
                 if proc.returncode:
                     raise RuntimeError(f'Falha código {proc.returncode}: {proc.stderr.decode(errors="backslashreplace")}')

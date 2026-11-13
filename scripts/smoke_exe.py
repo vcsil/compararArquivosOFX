@@ -24,7 +24,7 @@ def main():
         bank = root / '00 Banco Sintetico'; bank.mkdir()
         raw = fixture([('20261110120000', '20', 'SYNTH-1', 'Sintetico')])
         source = root / 'Entrada.ofx'; source.write_bytes(raw)
-        proc = subprocess.run([str(candidate)], cwd=base, input='1\n',
+        proc = subprocess.run([str(candidate)], cwd=base, input=b'1\n',
                               capture_output=True, timeout=120)
         if proc.returncode != 0:
             raise RuntimeError(f'Candidato falhou com código {proc.returncode}: {proc.stderr.decode(errors="backslashreplace")}')

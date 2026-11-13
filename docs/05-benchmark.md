@@ -72,3 +72,11 @@ Após a publicação da branch, a consulta ao histórico de execuções do GitHu
 ## Revisão 5.1
 
 As execuções Windows anteriores falharam e os jobs de build foram ignorados; consulte `05-executavel-windows.md`. A revisão acrescenta coleta no workflow para os dois onefile após build: menu completo com 15 amostras subsequentes, e processamento sintético de 100, 1.000 e 10.000 transações. Não há resultados Windows novos confirmados neste relatório. O tempo de processamento medido pelo script inclui arranque do processo e usa três amostras para 100/1.000, uma para 10.000; não deve ser confundido com o tempo isolado do motor ou com teste frio.
+
+## Retomada da Etapa 5 — correções dos empacotadores
+
+Workspace retomado diretamente da branch `codex/comparaofx-2.0-etapa5`, HEAD `1f0ef1a04a8af13100c41f538d47577241928dbe`, sem alterações preexistentes rastreadas. Não foi possível recuperar alterações locais do ambiente anterior; foram reconstruídas somente as correções ainda ausentes.
+
+A página pública da execução [43340149477](https://github.com/vcsil/compararArquivosOFX/actions/runs/43340149477) confirma os erros: PyInstaller tentou calcular caminho relativo entre D: e C: (`ValueError: path is on mount`); Nuitka concluiu standalone, mas o smoke enviou `str` ao subprocesso binário (`TypeError: a bytes-like object is required`). O scratch do build agora fica em diretório exclusivo no volume do repositório, mantendo spec/entrada no mesmo volume, trabalho isolado e saída fora do `dist/` legado. Os scripts de smoke e processamento agora enviam `b'1\n'`; a leitura de dados financeiros permanece estrita e inalterada.
+
+Validação local: Python 3.12.14/Linux, suíte completa com 124 testes, quatro ignorados por plataforma e sete falhas esperadas da baseline; nenhuma falha inesperada. Não há PowerShell ou Windows nativo neste ambiente. Resultados e métricas de executáveis Windows dependem da nova execução do workflow; não foram estimados. As proteções financeiras e o executável legado não foram modificados.

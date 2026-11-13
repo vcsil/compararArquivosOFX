@@ -8,7 +8,8 @@ $Repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $OutputDir = [IO.Path]::GetFullPath($OutputDir)
 $legacy = [IO.Path]::GetFullPath((Join-Path $Repo 'dist'))
 if ($OutputDir.Equals($legacy,[StringComparison]::OrdinalIgnoreCase) -or $OutputDir.StartsWith($legacy+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)) { throw 'O destino não pode ser dist/ legado.' }
-$Scratch = Join-Path $env:TEMP ('comparaofx-build-'+[guid]::NewGuid().ToString('N'))
+# Keep the spec and entry point on the same volume, even when TEMP is on C: and the repo on D:.
+$Scratch = Join-Path $Repo ('comparaofx-build-'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $Scratch,$OutputDir -Force | Out-Null
 function Invoke-Checked { param([string]$Exe,[string[]]$Arguments) & $Exe @Arguments; if ($LASTEXITCODE -ne 0) { throw "Comando falhou: $Exe (código $LASTEXITCODE)" } }
 try {
