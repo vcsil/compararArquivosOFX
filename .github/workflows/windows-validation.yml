@@ -124,3 +124,58 @@ jobs:
             ${{ runner.temp }}/codex-nuitka/standalone/comparaArqOFX.dist/
           if-no-files-found: error
           retention-days: 7
+  comparison:
+    needs: [pyinstaller, nuitka]
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: comparaofx-pyinstaller-candidate
+          path: ${{ runner.temp }}/comparison/pyinstaller
+      - uses: actions/download-artifact@v4
+        with:
+          name: comparaofx-nuitka-candidate
+          path: ${{ runner.temp }}/comparison/nuitka
+      - name: Validate and compare all candidates on the same runner
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $candidates = @(
+            @{ Label = 'PyInstaller onefile'; Path = "$env:RUNNER_TEMP/comparison/pyinstaller/ComparaOFX.exe" },
+            @{ Label = 'Nuitka standalone'; Path = "$env:RUNNER_TEMP/comparison/nuitka/standalone/comparaArqOFX.dist/comparaArqOFX.exe" },
+            @{ Label = 'Nuitka onefile'; Path = "$env:RUNNER_TEMP/comparison/nuitka/onefile/ComparaOFX.exe" }
+          )
+          $runtime = & python --version
+          $cpu = (Get-CimInstance Win32_Processor | Select-Object -First 1).Name
+          $reportPath = Join-Path $env:RUNNER_TEMP 'comparison-results.md'
+          foreach ($candidate in $candidates) {
+            $exe = $candidate.Path
+            python scripts/smoke_exe.py $exe
+            if ($LASTEXITCODE -ne 0) { throw "Smoke falhou: $($candidate.Label)" }
+            $startup = & ./scripts/benchmark_windows.ps1 -Exe $exe -Runs 15
+            $startup | Write-Output
+            $processing = & python scripts/benchmark_exe_processing.py $exe
+            if ($LASTEXITCODE -ne 0) { throw "Processamento falhou: $($candidate.Label)" }
+            $processing | Write-Output
+            $file = Get-Item -LiteralPath $exe
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash
+            $distribution = if ($exe.Contains('.dist/')) { @(Get-ChildItem -LiteralPath $file.DirectoryName -Recurse -File) } else { @($file) }
+            $totalBytes = ($distribution | Measure-Object -Property Length -Sum).Sum
+            $report = (@("candidato=$($candidate.Label); smoke=PASS; bytes=$($file.Length); MiB=$($file.Length / 1MB); SHA256=$hash; distribution_files=$($distribution.Count); distribution_bytes=$totalBytes; Python=$runtime; CPU=$cpu; commit=$env:GITHUB_SHA; imagem=$env:ImageOS/$env:ImageVersion; mesmo_runner=true") + @($startup) + @($processing)) -join "`n"
+            $report | Add-Content -LiteralPath $reportPath
+            $report | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+            $escaped = $report.Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
+            Write-Output "::notice title=Comparação no mesmo runner $($candidate.Label)::$escaped"
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: comparaofx-comparison-results
+          path: ${{ runner.temp }}/comparison-results.md
+          if-no-files-found: error
+          retention-days: 7
