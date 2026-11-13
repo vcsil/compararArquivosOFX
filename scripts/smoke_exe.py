@@ -1,5 +1,6 @@
 """Executa candidato em diretório temporário com OFX sintético; sem dados reais."""
 import shutil
+import os
 import json
 from datetime import date, datetime
 from unittest.mock import patch
@@ -19,6 +20,12 @@ from controller.workflow import planejar, executar
 
 def main():
     exe = Path(sys.argv[1]).resolve(strict=True)
+    candidate_env = os.environ.copy()
+    if os.name == 'nt':
+        # Do not let a separately installed Python satisfy the executable.
+        candidate_env.pop('PYTHONPATH', None)
+        candidate_env.pop('PYTHONHOME', None)
+        candidate_env['PATH'] = str(Path(os.environ['SystemRoot']) / 'System32')
     with tempfile.TemporaryDirectory(prefix='compara ofx ') as tmp:
         base = Path(tmp)
         root = base / 'Aplicação com acentos'; root.mkdir()
@@ -32,7 +39,7 @@ def main():
         source = root / 'Entrada.ofx'; source.write_bytes(raw)
         generation_started = datetime.now().replace(second=0, microsecond=0)
         proc = subprocess.run([str(candidate)], cwd=base, input=b'1\n',
-                              capture_output=True, timeout=120)
+                              capture_output=True, timeout=120, env=candidate_env)
         if b'\x1b[' in proc.stdout or b'\x1b[' in proc.stderr:
             raise AssertionError('Saída redirecionada contém códigos ANSI')
         if b'COMPARAOFX 2.0' not in proc.stdout or b'Selecione a institui' not in proc.stdout:
@@ -50,6 +57,8 @@ def main():
         if not generation_started <= generated <= datetime.now():
             raise AssertionError('Nome do Limpo não usa o horário local de geração')
         for path in (clean[0], general[0]):
+            if b'\x1b[' in path.read_bytes():
+                raise AssertionError('Sequência ANSI encontrada em arquivo OFX')
             items = carregar_ofx(path)[1].statements[0].transactions
             if len(items) != 1 or items[0].fitid != 'SYNTH-1':
                 raise AssertionError('Movimentação sintética não foi preservada')
@@ -60,7 +69,7 @@ def main():
                             ('20261110120000', '30', 'SYNTH-2', 'Novo')])
         source.write_bytes(next_raw)
         proc = subprocess.run([str(candidate)], cwd=base, input=b'1\n',
-                              capture_output=True, timeout=120)
+                              capture_output=True, timeout=120, env=candidate_env)
         if proc.returncode != 0:
             raise RuntimeError(f'Reimportação falhou: {proc.stderr.decode(errors="backslashreplace")}')
         archives = list(bank.rglob('Entrada.ofx'))
@@ -77,7 +86,7 @@ def main():
         conflict = fixture([('20261110120000', '999', 'SYNTH-1', 'Sintetico')])
         source.write_bytes(conflict)
         proc = subprocess.run([str(candidate)], cwd=base, input=b'1\n',
-                              capture_output=True, timeout=120)
+                              capture_output=True, timeout=120, env=candidate_env)
         if proc.returncode == 0 or not source.exists() or source.read_bytes() != conflict:
             raise AssertionError('Conflito de FITID não bloqueou preservando o original')
         if general[0].read_bytes() != before or len(list(bank.rglob('Entrada.ofx'))) != 2:
@@ -117,7 +126,7 @@ def main():
             saved_clean = (plan.importacao/expected_name).read_bytes()
             saved_general = plan.geral.read_bytes()
             proc = subprocess.run([str(candidate)], cwd=base, input=b'',
-                                  capture_output=True, timeout=120)
+                                  capture_output=True, timeout=120, env=candidate_env)
             if proc.returncode or source.exists() or safe_storage.pendencias(bank):
                 raise AssertionError(f'Candidato não recuperou manifesto v{version}')
             if ((plan.importacao/expected_name).read_bytes() != saved_clean
