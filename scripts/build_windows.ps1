@@ -33,6 +33,7 @@ try {
         Invoke-Checked $Py @('-m','PyInstaller','--noconfirm','--clean','--onefile','--console','--name','ComparaOFX','--distpath',$OutputDir,'--workpath',(Join-Path $Scratch 'work'),'--specpath',$Scratch,('--icon=' + $Icon),'src/comparaArqOFX.py')
         $Exe=Join-Path $OutputDir 'ComparaOFX.exe'
         if (-not (Test-Path -LiteralPath $Exe -PathType Leaf)) { throw 'Executável PyInstaller ausente.' }
+        & (Join-Path $PSScriptRoot 'scan_defender.ps1') -Exe $Exe
         Invoke-Checked $Py @('scripts/verify_icon.py',$Exe,$Icon)
         Invoke-Checked $Py @('scripts/smoke_exe.py',$Exe)
         Sign-IfRequested $Exe
@@ -45,12 +46,14 @@ try {
         Invoke-Checked $Py @('-m','nuitka','--standalone','--assume-yes-for-downloads',"--output-dir=$Standalone",("--windows-icon-from-ico=" + $Icon),'src/comparaArqOFX.py')
         $StandaloneExe=Join-Path $Standalone 'comparaArqOFX.dist/comparaArqOFX.exe'
         if (-not (Test-Path -LiteralPath $StandaloneExe -PathType Leaf)) { throw 'Executável standalone ausente.' }
+        & (Join-Path $PSScriptRoot 'scan_defender.ps1') -Exe $StandaloneExe
         Invoke-Checked $Py @('scripts/verify_icon.py',$StandaloneExe,$Icon)
         Invoke-Checked $Py @('scripts/smoke_exe.py',$StandaloneExe)
         Sign-IfRequested $StandaloneExe
         Invoke-Checked $Py @('-m','nuitka','--onefile','--assume-yes-for-downloads',"--output-dir=$Onefile",'--output-filename=ComparaOFX.exe',('--windows-icon-from-ico=' + $Icon),'src/comparaArqOFX.py')
         $Exe=Join-Path $Onefile 'ComparaOFX.exe'
         if (-not (Test-Path -LiteralPath $Exe -PathType Leaf)) { throw 'Executável Nuitka ausente.' }
+        & (Join-Path $PSScriptRoot 'scan_defender.ps1') -Exe $Exe
         Invoke-Checked $Py @('scripts/verify_icon.py',$Exe,$Icon)
         Invoke-Checked $Py @('scripts/smoke_exe.py',$Exe)
         Sign-IfRequested $Exe
