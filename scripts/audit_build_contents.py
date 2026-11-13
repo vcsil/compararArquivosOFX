@@ -38,7 +38,8 @@ def inventory_nuitka(path):
     if root.tag != 'nuitka-compilation-report' or root.get('completion') != 'yes':
         raise ValueError('Incomplete or invalid Nuitka compilation report')
     modules = sorted(node.get('name') for node in root.findall('module') if node.get('name'))
-    files = sorted(node.get('target_path', '') for node in root.findall('data_file'))
+    files = sorted(node.get('name') for tag in ('data_file', 'data_blob')
+                   for node in root.findall(tag) if node.get('name'))
     return {'format': 'nuitka', 'modules': modules, 'data_files': files}
 
 

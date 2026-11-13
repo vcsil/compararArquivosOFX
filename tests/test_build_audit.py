@@ -22,5 +22,9 @@ class BuildAudit(unittest.TestCase):
             with patch.object(sys,'argv',['audit','nuitka',str(path),str(out)]):
                 with self.assertRaises(SystemExit): audit.main()
             self.assertIn('test_baseline',out.read_text())
+            path.write_text('<nuitka-compilation-report completion="yes"><module name="controller.workflow"/><module name="ofxtools.Parser"/><data_file name="tests/test_baseline.py"/></nuitka-compilation-report>')
+            with patch.object(sys,'argv',['audit','nuitka',str(path),str(out)]):
+                with self.assertRaises(SystemExit): audit.main()
+            self.assertIn('tests/test_baseline.py',out.read_text())
             path.write_text('<nuitka-compilation-report completion="error"/>')
             with self.assertRaises(ValueError): audit.inventory_nuitka(path)
