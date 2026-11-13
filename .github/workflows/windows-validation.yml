@@ -2,9 +2,9 @@ name: Windows validation and candidate builds
 on:
   workflow_dispatch:
   push:
-    branches: [codex/comparaofx-2.0-etapa5, codex/comparaofx-2.0-etapa6, codex/comparaofx-2.0-icone-assinatura, codex/comparaofx-2.0-otimizacao-segura]
+    branches: [codex/comparaofx-2.0-etapa5, codex/comparaofx-2.0-etapa6, codex/comparaofx-2.0-icone-assinatura, codex/comparaofx-2.0-otimizacao-segura, codex/comparaofx-2.0-colorama]
   pull_request:
-    branches: [codex/comparaofx-2.0-etapa5, codex/comparaofx-2.0-etapa6, codex/comparaofx-2.0-icone-assinatura, codex/comparaofx-2.0-otimizacao-segura]
+    branches: [codex/comparaofx-2.0-etapa5, codex/comparaofx-2.0-etapa6, codex/comparaofx-2.0-icone-assinatura, codex/comparaofx-2.0-otimizacao-segura, codex/comparaofx-2.0-colorama]
 permissions:
   contents: read
 jobs:
@@ -152,10 +152,36 @@ jobs:
             ${{ runner.temp }}/codex-nuitka/onefile/inventory-nuitka.json
           if-no-files-found: error
           retention-days: 7
-  comparison:
-    needs: [pyinstaller, nuitka]
+  baseline_nuitka:
+    needs: tests
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 993a0cde56ff4fa6f564bcc6bd714ef4cb3743a4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Rebuild previous Nuitka onefile for same-runner comparison
+        shell: pwsh
+        run: |
+          python -m pip install -r requirements.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Dependências da baseline falharam.' }
+          python -m pip install Nuitka==2.5.9 ordered-set==4.1.0 zstandard==0.23.0
+          if ($LASTEXITCODE -ne 0) { throw 'Instalação do Nuitka falhou.' }
+          python -m nuitka --onefile --assume-yes-for-downloads "--output-dir=$env:RUNNER_TEMP/baseline" --output-filename=ComparaOFX.exe --windows-icon-from-ico=assets/comparaofx-2.0-azul.ico src/comparaArqOFX.py
+          if ($LASTEXITCODE -ne 0) { throw 'Build da baseline falhou.' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: comparaofx-nuitka-baseline-rebuilt
+          path: ${{ runner.temp }}/baseline/ComparaOFX.exe
+          if-no-files-found: error
+          retention-days: 7
+  comparison:
+    needs: [pyinstaller, nuitka, baseline_nuitka]
+    runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -170,11 +196,16 @@ jobs:
         with:
           name: comparaofx-nuitka-candidate
           path: ${{ runner.temp }}/comparison/nuitka
+      - uses: actions/download-artifact@v4
+        with:
+          name: comparaofx-nuitka-baseline-rebuilt
+          path: ${{ runner.temp }}/comparison/baseline
       - name: Validate and compare all candidates on the same runner
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $candidates = @(
+            @{ Label = 'Baseline Nuitka onefile recompilada 993a0cd'; Path = "$env:RUNNER_TEMP/comparison/baseline/ComparaOFX.exe" },
             @{ Label = 'PyInstaller onefile'; Path = "$env:RUNNER_TEMP/comparison/pyinstaller/ComparaOFX.exe" },
             @{ Label = 'Nuitka standalone'; Path = "$env:RUNNER_TEMP/comparison/nuitka/standalone/comparaArqOFX.dist/comparaArqOFX.exe" },
             @{ Label = 'Nuitka onefile'; Path = "$env:RUNNER_TEMP/comparison/nuitka/onefile/ComparaOFX.exe" }
@@ -195,7 +226,8 @@ jobs:
             $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash
             $distribution = if ($exe.Contains('.dist/')) { @(Get-ChildItem -LiteralPath $file.DirectoryName -Recurse -File) } else { @($file) }
             $totalBytes = ($distribution | Measure-Object -Property Length -Sum).Sum
-            $report = (@("candidato=$($candidate.Label); smoke=PASS; bytes=$($file.Length); MiB=$($file.Length / 1MB); SHA256=$hash; distribution_files=$($distribution.Count); distribution_bytes=$totalBytes; Python=$runtime; CPU=$cpu; commit=$env:GITHUB_SHA; imagem=$env:ImageOS/$env:ImageVersion; mesmo_runner=true") + @($startup) + @($processing)) -join "`n"
+            $sourceCommit = if ($candidate.Label -like 'Baseline*') { '993a0cde56ff4fa6f564bcc6bd714ef4cb3743a4' } else { $env:GITHUB_SHA }
+            $report = (@("candidato=$($candidate.Label); smoke=PASS; bytes=$($file.Length); MiB=$($file.Length / 1MB); SHA256=$hash; distribution_files=$($distribution.Count); distribution_bytes=$totalBytes; Python=$runtime; CPU=$cpu; commit=$sourceCommit; imagem=$env:ImageOS/$env:ImageVersion; mesmo_runner=true") + @($startup) + @($processing)) -join "`n"
             $report | Add-Content -LiteralPath $reportPath
             $report | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
             $escaped = $report.Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')

@@ -33,6 +33,10 @@ def main():
         generation_started = datetime.now().replace(second=0, microsecond=0)
         proc = subprocess.run([str(candidate)], cwd=base, input=b'1\n',
                               capture_output=True, timeout=120)
+        if b'\x1b[' in proc.stdout or b'\x1b[' in proc.stderr:
+            raise AssertionError('Saída redirecionada contém códigos ANSI')
+        if b'COMPARAOFX 2.0' not in proc.stdout or b'Selecione a institui' not in proc.stdout:
+            raise AssertionError('Cabeçalho ou menu ausente na saída redirecionada')
         if proc.returncode != 0:
             raise RuntimeError(f'Candidato falhou com código {proc.returncode}: {proc.stderr.decode(errors="backslashreplace")}')
         archived = list(bank.rglob('Entrada.ofx'))

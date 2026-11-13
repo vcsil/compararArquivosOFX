@@ -37,7 +37,7 @@ try {
         Invoke-Checked $Py @('-m','PyInstaller','--noconfirm','--clean','--onefile','--console','--name','ComparaOFX','--distpath',$OutputDir,'--workpath',(Join-Path $Scratch 'work'),'--specpath',$Scratch,('--icon=' + $Icon),'src/comparaArqOFX.py')
         $Exe=Join-Path $OutputDir 'ComparaOFX.exe'
         if (-not (Test-Path -LiteralPath $Exe -PathType Leaf)) { throw 'Executável PyInstaller ausente.' }
-        Invoke-Checked $Py @('scripts/audit_build_contents.py','pyinstaller',$Exe,(Join-Path $OutputDir 'inventory-pyinstaller.json'))
+        Invoke-Checked $Py @('scripts/audit_build_contents.py','pyinstaller',$Exe,(Join-Path $OutputDir 'inventory-pyinstaller.json'),'--require-colorama')
         Copy-Item -LiteralPath (Join-Path $Scratch 'work/ComparaOFX/Analysis-00.toc') -Destination (Join-Path $OutputDir 'Analysis-00.toc')
         Copy-Item -LiteralPath (Join-Path $Scratch 'work/ComparaOFX/PYZ-00.toc') -Destination (Join-Path $OutputDir 'PYZ-00.toc')
         & (Join-Path $PSScriptRoot 'scan_defender.ps1') -Exe $Exe
@@ -53,7 +53,7 @@ try {
         Invoke-Checked $Py @('-m','nuitka','--standalone','--assume-yes-for-downloads',"--output-dir=$Standalone",("--report=" + (Join-Path $Standalone 'compilation-report.xml')),("--windows-icon-from-ico=" + $Icon),'src/comparaArqOFX.py')
         $StandaloneExe=Join-Path $Standalone 'comparaArqOFX.dist/comparaArqOFX.exe'
         if (-not (Test-Path -LiteralPath $StandaloneExe -PathType Leaf)) { throw 'Executável standalone ausente.' }
-        Invoke-Checked $Py @('scripts/audit_build_contents.py','nuitka',(Join-Path $Standalone 'compilation-report.xml'),(Join-Path $Standalone 'inventory-nuitka.json'),'--distribution',(Join-Path $Standalone 'comparaArqOFX.dist'))
+        Invoke-Checked $Py @('scripts/audit_build_contents.py','nuitka',(Join-Path $Standalone 'compilation-report.xml'),(Join-Path $Standalone 'inventory-nuitka.json'),'--distribution',(Join-Path $Standalone 'comparaArqOFX.dist'),'--require-colorama')
         & (Join-Path $PSScriptRoot 'scan_defender.ps1') -Exe $StandaloneExe
         Invoke-Checked $Py @('scripts/verify_icon.py',$StandaloneExe,$Icon)
         Invoke-Checked $Py @('scripts/smoke_exe.py',$StandaloneExe)
@@ -61,7 +61,7 @@ try {
         Invoke-Checked $Py @('-m','nuitka','--onefile','--assume-yes-for-downloads',"--output-dir=$Onefile",("--report=" + (Join-Path $Onefile 'compilation-report.xml')),'--output-filename=ComparaOFX.exe',('--windows-icon-from-ico=' + $Icon),'src/comparaArqOFX.py')
         $Exe=Join-Path $Onefile 'ComparaOFX.exe'
         if (-not (Test-Path -LiteralPath $Exe -PathType Leaf)) { throw 'Executável Nuitka ausente.' }
-        Invoke-Checked $Py @('scripts/audit_build_contents.py','nuitka',(Join-Path $Onefile 'compilation-report.xml'),(Join-Path $Onefile 'inventory-nuitka.json'))
+        Invoke-Checked $Py @('scripts/audit_build_contents.py','nuitka',(Join-Path $Onefile 'compilation-report.xml'),(Join-Path $Onefile 'inventory-nuitka.json'),'--require-colorama')
         & (Join-Path $PSScriptRoot 'scan_defender.ps1') -Exe $Exe
         Invoke-Checked $Py @('scripts/verify_icon.py',$Exe,$Icon)
         Invoke-Checked $Py @('scripts/smoke_exe.py',$Exe)

@@ -143,3 +143,5 @@ Limites mantidos: os runners têm Python para construir e executar o harness, po
 Artefato principal: [comparaofx-nuitka-candidate, seção Artifacts](https://github.com/vcsil/compararArquivosOFX/actions/runs/43413157659#artifacts), arquivo interno `onefile/ComparaOFX.exe`. O mesmo artefato contém a distribuição standalone; PyInstaller e o relatório de comparação têm artefatos separados na mesma execução. São arquivos de teste retidos por sete dias, sem release pública. O SHA-256 acima identifica o EXE, não o ZIP do GitHub.
 
 O commit documental final usa `[skip ci]`: contém somente os documentos desta missão, sem alterar as fontes validadas em `116b6e7`. Não foi feito merge em master, tag de release, remoção de branches, migração de históricos ou substituição de `dist/Compara OFX.exe`. A liberação definitiva deve aguardar a revisão dos resultados e a aprovação explícita do usuário.
+
+> Atualização: as contagens de 146 acima são históricas dos respectivos commits. O workflow da missão de otimização [43455514175](https://github.com/vcsil/compararArquivosOFX/actions/runs/43455514175) executou 150 testes em Linux e Windows.

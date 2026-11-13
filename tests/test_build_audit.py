@@ -46,3 +46,14 @@ class BuildAudit(unittest.TestCase):
             with patch.object(sys,'argv',['audit','nuitka',str(report),str(out),'--distribution',str(dist)]), contextlib.redirect_stdout(io.StringIO()):
                 with self.assertRaises(SystemExit): audit.main()
             self.assertIn('tests/test_baseline.py',out.read_text())
+
+class ColoramaAudit(unittest.TestCase):
+    def test_build_exige_colorama_quando_solicitado(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); report = root/'report.xml'; out = root/'inventory.json'
+            report.write_text('<nuitka-compilation-report completion="yes"><module name="controller.workflow"/><module name="ofxtools.Parser"/></nuitka-compilation-report>')
+            with patch.object(sys, 'argv', ['audit','nuitka',str(report),str(out),'--require-colorama']), contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaisesRegex(ValueError, 'Colorama'): audit.main()
+            report.write_text('<nuitka-compilation-report completion="yes"><module name="controller.workflow"/><module name="ofxtools.Parser"/><module name="colorama"/></nuitka-compilation-report>')
+            with patch.object(sys, 'argv', ['audit','nuitka',str(report),str(out),'--require-colorama']), contextlib.redirect_stdout(io.StringIO()):
+                audit.main()
