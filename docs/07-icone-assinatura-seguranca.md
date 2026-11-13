@@ -44,3 +44,12 @@ Sem `-SignThumbprint` o build permanece **não assinado**, o que deve ser declar
 7. Somente após testes de segurança e autorização explícita do usuário considerar release.
 
 Não modificar o motor de deduplicação, históricos reais, nem permitir escalonamento de privilégios para suprimir alertas.
+
+
+## Ícone azul e validação
+
+O executável legado contém um único recurso PNG RGBA de 256 × 256. `scripts/recolor_icon.py` lê o recurso PE com `pefile`, preserva geometria, alfa e pixels neutros, e substitui matizes verdes por azul de matiz 221° (referência #2563EB), mantendo variações de brilho e saturação. Requer `pefile` e `Pillow`; execute `venv/bin/python scripts/recolor_icon.py` na raiz. Foram gerados PNG, comparação visual e ICO com 16, 24, 32, 48, 64, 128 e 256 pixels; os tamanhos menores são reamostrados do único original.
+
+Ambos empacotadores usam `assets/comparaofx-2.0-azul.ico`. `scripts/verify_icon.py` lê os recursos PE e compara imagens e alfa com cada resolução do ICO, antes do smoke financeiro e da assinatura opcional. O build instala `pefile==2024.8.26` e `Pillow==11.3.0` para essa inspeção. A compilação normal permanece sem certificado e os candidatos são não assinados.
+
+A detecção anterior `Program:Win32/Contebrew.A!ml` não foi esclarecida. Não há Microsoft Defender neste ambiente Linux; a alteração visual não constitui correção de segurança. Resultados Windows, inspeção PE, hashes e benchmarks dependem da execução do workflow e devem ser confirmados antes de recomendar qualquer candidato. Caso haja detecção, interrompa a aprovação e submeta o binário à Microsoft para análise oficial, sem dados reais.
