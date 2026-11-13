@@ -1,3 +1,5 @@
+import contextlib
+import io
 import importlib.util
 import tempfile
 import unittest
@@ -19,11 +21,11 @@ class BuildAudit(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/'report.xml'; out=Path(tmp)/'inventory.json'
             path.write_text('<nuitka-compilation-report completion="yes"><module name="controller.workflow"/><module name="ofxtools.Parser"/><module name="test_baseline"/></nuitka-compilation-report>')
-            with patch.object(sys,'argv',['audit','nuitka',str(path),str(out)]):
+            with patch.object(sys,'argv',['audit','nuitka',str(path),str(out)]), contextlib.redirect_stdout(io.StringIO()):
                 with self.assertRaises(SystemExit): audit.main()
             self.assertIn('test_baseline',out.read_text())
             path.write_text('<nuitka-compilation-report completion="yes"><module name="controller.workflow"/><module name="ofxtools.Parser"/><data_file name="tests/test_baseline.py"/></nuitka-compilation-report>')
-            with patch.object(sys,'argv',['audit','nuitka',str(path),str(out)]):
+            with patch.object(sys,'argv',['audit','nuitka',str(path),str(out)]), contextlib.redirect_stdout(io.StringIO()):
                 with self.assertRaises(SystemExit): audit.main()
             self.assertIn('tests/test_baseline.py',out.read_text())
             path.write_text('<nuitka-compilation-report completion="error"/>')
