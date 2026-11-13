@@ -152,7 +152,10 @@ def executar(plano, *, bloqueio=None):
     stage = op / 'pasta'
     stage.mkdir()
     safe_storage.escrever(stage / 'OFX Limpo.ofx', plano.limpo)
-    if _hash(stage / 'OFX Limpo.ofx') != hashlib.sha256(plano.limpo).digest() or _assinatura(carregar_ofx(stage / 'OFX Limpo.ofx')[1]) != plano.assinatura_limpo:
+    if _hash(stage / 'OFX Limpo.ofx') != hashlib.sha256(plano.limpo).digest():
+        raise OrganizacaoError('Falha na validação do OFX Limpo preparado')
+    assinatura_lida = _assinatura(carregar_ofx(stage / 'OFX Limpo.ofx')[1])
+    if assinatura_lida != plano.assinatura_limpo:
         raise OrganizacaoError('Falha na validação do OFX Limpo preparado')
     for origem in (plano.original, *plano.anexos):
         destino = stage / origem.name
@@ -164,7 +167,13 @@ def executar(plano, *, bloqueio=None):
     temp_geral = op / 'geral.tmp'
     if plano.geral_bytes is not None:
         safe_storage.escrever(temp_geral, plano.geral_bytes)
-        if _hash(temp_geral) != hashlib.sha256(plano.geral_bytes).digest() or _assinatura(carregar_ofx(temp_geral)[1]) != plano.assinatura_geral:
+        if _hash(temp_geral) != hashlib.sha256(plano.geral_bytes).digest():
+            raise OrganizacaoError('Falha na validação do Geral preparado')
+        # Se os bytes e a assinatura esperada são idênticos aos do Limpo já
+        # relido, o hash do Geral comprova o mesmo conteúdo validado. Em todos
+        # os demais casos o Geral é interpretado e conferido separadamente.
+        identico = plano.geral_bytes == plano.limpo and plano.assinatura_geral == assinatura_lida
+        if not identico and _assinatura(carregar_ofx(temp_geral)[1]) != plano.assinatura_geral:
             raise OrganizacaoError('Falha na validação do Geral preparado')
     manifest['estado'] = 'PREPARADO'
     safe_storage.atualizar_manifesto(op, manifest)

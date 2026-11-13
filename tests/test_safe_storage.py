@@ -27,7 +27,9 @@ class Seguranca(unittest.TestCase):
     def check_pending(self):
         with self.assertRaises(OrganizacaoError): ss.exigir_sem_pendencias(self.bank)
         with ss.bloquear(self.bank):
-            with self.assertRaises(OrganizacaoError): ss.recuperar_concluida(self.bank)
+            try: ss.recuperar_concluida(self.bank)
+            except OrganizacaoError: pass
+        self.assertTrue(self.src.exists())
     def test_falha_temporario_antes_publicacao(self):
         plan=self.plan(); original=ss.escrever
         def fail(path,data):
@@ -37,6 +39,52 @@ class Seguranca(unittest.TestCase):
             with self.assertRaises(OSError): executar(plan)
         self.assertEqual(self.geral.read_bytes(),self.old); self.assertEqual(self.src.read_bytes(),self.raw)
         self.assertFalse(plan.importacao.exists()); self.check_pending()
+        self.assertEqual(ss.pendencias(self.bank),[])
+    def test_preparacao_alteracao_origem_bloqueia_limpeza(self):
+        plan=self.plan(); real=ss.escrever
+        def fail(path,data):
+            if Path(path).name=='geral.tmp': raise OSError('interrompido')
+            return real(path,data)
+        with patch.object(ss,'escrever',side_effect=fail):
+            with self.assertRaises(OSError): executar(plan)
+        self.pdf.write_bytes(b'alterado')
+        with self.assertRaises(OrganizacaoError): ss.recuperar_concluida(self.bank)
+        self.assertEqual(self.pdf.read_bytes(),b'alterado'); self.assertTrue(ss.pendencias(self.bank))
+    def test_preparacao_arquivo_desconhecido_bloqueia_limpeza(self):
+        plan=self.plan()
+        with patch.object(ss,'publicar_pasta',side_effect=OSError('interrompido')):
+            with self.assertRaises(OSError): executar(plan)
+        op=ss.pendencias(self.bank)[0]; (op/'desconhecido').write_bytes(b'preservar')
+        with self.assertRaises(OrganizacaoError): ss.recuperar_concluida(self.bank)
+        self.assertEqual((op/'desconhecido').read_bytes(),b'preservar')
+    def test_preparacao_historico_alterado_bloqueia_limpeza(self):
+        plan=self.plan()
+        with patch.object(ss,'publicar_pasta',side_effect=OSError('interrompido')):
+            with self.assertRaises(OSError): executar(plan)
+        self.geral.write_bytes(b'historico externo')
+        with self.assertRaises(OrganizacaoError): ss.recuperar_concluida(self.bank)
+        self.assertEqual(self.geral.read_bytes(),b'historico externo'); self.assertTrue(ss.pendencias(self.bank))
+    def test_preparacao_destino_ocupado_bloqueia_limpeza(self):
+        plan=self.plan()
+        with patch.object(ss,'publicar_pasta',side_effect=OSError('interrompido')):
+            with self.assertRaises(OSError): executar(plan)
+        plan.importacao.mkdir(); (plan.importacao/'outro').write_text('preservar')
+        with self.assertRaises(OrganizacaoError): ss.recuperar_concluida(self.bank)
+        self.assertEqual((plan.importacao/'outro').read_text(),'preservar'); self.assertTrue(ss.pendencias(self.bank))
+    def test_preparacao_temporario_trocado_bloqueia_limpeza(self):
+        plan=self.plan()
+        with patch.object(ss,'publicar_pasta',side_effect=OSError('interrompido')):
+            with self.assertRaises(OSError): executar(plan)
+        op=ss.pendencias(self.bank)[0]; temp=op/'pasta'/'anexo.pdf'; temp.write_bytes(b'outro')
+        with self.assertRaises(OrganizacaoError): ss.recuperar_concluida(self.bank)
+        self.assertEqual(temp.read_bytes(),b'outro'); self.assertTrue(ss.pendencias(self.bank))
+    def test_preparacao_geral_criado_externamente_bloqueia_limpeza(self):
+        self.geral.unlink(); plan=self.plan()
+        with patch.object(ss,'publicar_pasta',side_effect=OSError('interrompido')):
+            with self.assertRaises(OSError): executar(plan)
+        self.geral.write_bytes(b'externo')
+        with self.assertRaises(OrganizacaoError): ss.recuperar_concluida(self.bank)
+        self.assertEqual(self.geral.read_bytes(),b'externo'); self.assertTrue(ss.pendencias(self.bank))
     def test_falha_escrita_temporaria_parcial(self):
         plan=self.plan(); original=ss.escrever
         def fail(path,data):
@@ -46,6 +94,7 @@ class Seguranca(unittest.TestCase):
         with patch.object(ss,'escrever',side_effect=fail):
             with self.assertRaises(OSError): executar(plan)
         self.assertEqual(self.geral.read_bytes(),self.old); self.assertFalse(plan.importacao.exists()); self.check_pending()
+        self.assertTrue(ss.pendencias(self.bank), 'temporário parcial sem hash verificável deve permanecer')
     def test_falha_antes_publicar_geral(self):
         plan=self.plan()
         with patch.object(ss,'publicar_arquivo',side_effect=OSError('bloqueado')):
@@ -211,6 +260,24 @@ class Seguranca(unittest.TestCase):
         with ss.bloquear(self.bank): ss.recuperar_concluida(self.bank)
         self.assertFalse(self.src.exists()); self.assertEqual((plan.importacao/self.src.name).read_bytes(),self.raw)
         self.assertEqual([t.fitid for t in carregar_ofx(self.geral)[1].statements[0].transactions],['A','B'])
+    def test_primeira_importacao_saida_identica_reduz_conversao(self):
+        from controller import ofx_functions
+        self.geral.unlink(); plan=self.plan(); real=ofx_functions.carregar_ofx; nomes=[]
+        def read(path,*args,**kwargs):
+            nomes.append(Path(path).name)
+            return real(path,*args,**kwargs)
+        with patch.object(ofx_functions,'carregar_ofx',side_effect=read): executar(plan)
+        self.assertEqual(nomes,['OFX Limpo.ofx'])
+        self.assertEqual([t.fitid for t in carregar_ofx(self.geral)[1].statements[0].transactions],['A','B'])
+    def test_geral_temporario_corrompido_e_detectado_mesmo_identico(self):
+        self.geral.unlink(); plan=self.plan(); real=ss.escrever
+        def corrupt(path,data):
+            real(path,data)
+            if Path(path).name=='geral.tmp': Path(path).write_bytes(b'corrompido')
+        with patch.object(ss,'escrever',side_effect=corrupt):
+            with self.assertRaises(OrganizacaoError): executar(plan)
+        self.assertFalse(plan.importacao.exists()); self.assertFalse(self.geral.exists())
+        self.assertEqual(self.src.read_bytes(),self.raw); self.assertTrue(ss.pendencias(self.bank))
     def test_sem_novidades_nao_regrava_geral(self):
         self.src.write_bytes(self.old); plan=self.plan(); before=self.geral.read_bytes()
         self.assertEqual(plan.resultado.relatorio.estado,'SEM_NOVIDADES')
@@ -300,6 +367,10 @@ executar(p)
                         ss.recuperar_concluida(bank); ss.recuperar_concluida(bank)
                         self.assertEqual(ss.pendencias(bank),[])
                         self.assertFalse((root/'atual.ofx').exists())
+                    elif target=='preparado':
+                        ss.recuperar_concluida(bank)
+                        self.assertEqual(ss.pendencias(bank),[])
+                        self.assertEqual((root/'atual.ofx').read_bytes(),self.raw)
                     else:
                         with self.assertRaises(OrganizacaoError): ss.recuperar_concluida(bank)
                         self.assertEqual((root/'atual.ofx').read_bytes(),self.raw)

@@ -1,0 +1,59 @@
+name: Windows validation and candidate builds
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/comparaofx-2.0-etapa5]
+  pull_request:
+    branches: [codex/comparaofx-2.0-etapa5]
+permissions:
+  contents: read
+jobs:
+  tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - run: python -m unittest discover -s tests -v
+  pyinstaller:
+    needs: tests
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build and smoke test PyInstaller
+        shell: pwsh
+        run: ./scripts/build_windows.ps1 -Tool pyinstaller -OutputDir "$env:RUNNER_TEMP/codex-pyinstaller"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: comparaofx-pyinstaller-candidate
+          path: ${{ runner.temp }}/codex-pyinstaller/ComparaOFX.exe
+          if-no-files-found: error
+          retention-days: 7
+  nuitka:
+    needs: tests
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build and smoke test Nuitka standalone and onefile
+        shell: pwsh
+        run: ./scripts/build_windows.ps1 -Tool nuitka -OutputDir "$env:RUNNER_TEMP/codex-nuitka"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: comparaofx-nuitka-candidate
+          path: ${{ runner.temp }}/codex-nuitka/onefile/ComparaOFX.exe
+          if-no-files-found: error
+          retention-days: 7

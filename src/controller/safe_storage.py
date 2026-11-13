@@ -89,6 +89,107 @@ def exigir_sem_pendencias(banco):
         raise OrganizacaoError('Operação pendente em .comparaofx; preserve os arquivos e faça inspeção antes de continuar')
 
 
+def _limpar_preparacao(banco, op, m):
+    """Remove apenas preparação própria quando ainda não houve publicação."""
+    import re
+    from .organization import ANEXOS, pasta_dia
+    if not re.fullmatch(r'[0-9a-f]{32}', op.name):
+        raise ValueError('identificador de operação inválido')
+    pasta, geral = Path(m['pasta']), Path(m['geral'])
+    for path in (pasta, geral):
+        if path.is_absolute() or path.drive or '..' in path.parts or len(path.parts) != 4:
+            raise ValueError('caminho inválido')
+    data = date.fromisoformat(geral.parent.name)
+    if (pasta.parent != geral.parent or pasta_dia(banco, data).relative_to(banco) != geral.parent
+            or not re.fullmatch(r'00[1-9]|0[1-9][0-9]|[1-9][0-9]{2}', pasta.name)
+            or geral.name != f'OFXGeral-{data.isoformat()}.ofx'):
+        raise ValueError('destino inválido')
+    pasta, geral = banco / pasta, banco / geral
+    for path in (pasta, geral, *pasta.parents):
+        if path == banco.parent: break
+        if link_inseguro(path): raise ValueError('link inseguro')
+    historico_rel = m.get('historico')
+    historico = None
+    if historico_rel is not None:
+        rel = Path(historico_rel)
+        if rel.is_absolute() or rel.drive or '..' in rel.parts or len(rel.parts) != 4:
+            raise ValueError('histórico inválido')
+        hd = date.fromisoformat(rel.parent.name)
+        if pasta_dia(banco, hd).relative_to(banco) != rel.parent or rel.name != f'OFXGeral-{hd.isoformat()}.ofx':
+            raise ValueError('histórico inválido')
+        historico = banco / rel
+        for path in (historico, *historico.parents):
+            if path == banco.parent: break
+            if link_inseguro(path): raise ValueError('link inseguro')
+    def sha(path):
+        h = hashlib.sha256()
+        with path.open('rb') as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b''): h.update(chunk)
+        return h.hexdigest()
+    arquivos = m['arquivos']
+    if not isinstance(arquivos, list) or not arquivos:
+        raise ValueError('lista inválida')
+    nomes = set()
+    hashes_esperados = {'ofx limpo.ofx': m['limpo_hash']}
+    for i, item in enumerate(arquivos):
+        nome = item['nome']
+        if (not isinstance(nome, str) or nome in ('', '.', '..') or Path(nome).name != nome
+                or '\\' in nome or nome.casefold() in nomes or nome.casefold() == 'ofx limpo.ofx'):
+            raise ValueError('nome inválido')
+        nomes.add(nome.casefold())
+        hashes_esperados[nome.casefold()] = item['sha256']
+        if (i == 0 and Path(nome).suffix.casefold() != '.ofx') or (i > 0 and Path(nome).suffix.casefold() not in ANEXOS):
+            raise ValueError('tipo inválido')
+    def verificar():
+        for path in (banco, banco / '.comparaofx', op, op / 'pasta', *pasta.parents):
+            if path == banco.parent: break
+            if link_inseguro(path): raise ValueError('link inseguro durante limpeza')
+        if pasta.exists() or link_inseguro(pasta): raise ValueError('pasta já publicada')
+        if historico:
+            for path in (historico, *historico.parents):
+                if path == banco.parent: break
+                if link_inseguro(path): raise ValueError('histórico inseguro durante limpeza')
+            if link_inseguro(historico) or not historico.is_file() or historico.stat().st_nlink != 1 or sha(historico) != m['historico_hash']:
+                raise ValueError('histórico alterado')
+        elif m.get('historico_hash') is not None:
+            raise ValueError('hash histórico inválido')
+        if historico != geral and (geral.exists() or link_inseguro(geral)):
+            raise ValueError('geral já publicado')
+        for item in arquivos:
+            origem = banco.parent / item['nome']
+            if link_inseguro(origem) or not origem.is_file() or origem.stat().st_nlink != 1 or sha(origem) != item['sha256']:
+                raise ValueError('original ausente ou alterado')
+    verificar()
+    elementos = list(op.iterdir())
+    if any(p.name not in ('manifesto.json','pasta','geral.tmp') for p in elementos):
+        raise ValueError('arquivos auxiliares desconhecidos')
+    stage = op / 'pasta'
+    if stage.exists():
+        if link_inseguro(stage) or not stage.is_dir(): raise ValueError('preparação inválida')
+        for file in stage.iterdir():
+            if (file.name.casefold() not in nomes | {'ofx limpo.ofx'} or link_inseguro(file)
+                    or not file.is_file() or file.stat().st_nlink != 1
+                    or sha(file) != hashes_esperados[file.name.casefold()]):
+                raise ValueError('arquivo temporário desconhecido')
+    temp = op / 'geral.tmp'
+    if temp.exists() and (link_inseguro(temp) or not temp.is_file() or temp.stat().st_nlink != 1 or sha(temp) != m['geral_hash']):
+        raise ValueError('geral temporário inválido')
+    if stage.exists():
+        for file in stage.iterdir():
+            verificar()
+            if link_inseguro(file) or file.stat().st_nlink != 1 or sha(file) != hashes_esperados[file.name.casefold()]:
+                raise ValueError('temporário alterado durante a limpeza')
+            file.unlink()
+        stage.rmdir()
+    if temp.exists():
+        verificar()
+        if link_inseguro(temp) or temp.stat().st_nlink != 1 or sha(temp) != m['geral_hash']:
+            raise ValueError('geral temporário alterado durante a limpeza')
+        temp.unlink()
+    verificar()
+    finalizar(op)
+
+
 def recuperar_concluida(banco, *, bloqueio=None):
     """Remove somente registro inequivocamente concluído; outros estados bloqueiam.
 
@@ -111,6 +212,9 @@ def recuperar_concluida(banco, *, bloqueio=None):
             if link_inseguro(manifest_path) or manifest_path.stat().st_size > 65536:
                 raise ValueError('manifesto inválido')
             m = json.loads(manifest_path.read_text(encoding='utf-8'))
+            if m['versao'] == 1 and m['estado'] in ('PREPARANDO', 'PREPARADO', 'PUBLICANDO'):
+                _limpar_preparacao(banco, op, m)
+                continue
             if m['versao'] != 1 or m['estado'] not in ('PASTA_PUBLICADA', 'HISTORICO_ATUALIZADO', 'CONCLUIDO'):
                 raise ValueError('operação ainda não concluída')
             if sorted(x.name for x in op.iterdir()) != ['manifesto.json']:

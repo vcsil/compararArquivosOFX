@@ -75,4 +75,12 @@ def main(raiz=None, entrada=None, saida=None):
         return 1
 
 if __name__ == '__main__':
-    sys.exit(main())
+    resultado = main()
+    # Em console interativo a janela aberta por duplo clique deve permanecer
+    # visível; pipes e testes automatizados nunca ficam aguardando esta pausa.
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        try:
+            input('Pressione Enter para sair.')
+        except (EOFError, KeyboardInterrupt):
+            pass
+    sys.exit(resultado)
