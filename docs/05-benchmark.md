@@ -106,3 +106,59 @@ A execução [43405640308](https://github.com/vcsil/compararArquivosOFX/actions/
 ### Comparação no mesmo runner
 
 As primeiras execuções usaram CPUs diferentes (EPYC 7763 e 9V74), e os tempos variaram mesmo sem mudanças no motor. O job `comparison`, dependente dos dois builds, baixa os três candidatos da mesma execução e repete smoke, 15 aberturas subsequentes e processamento de 100/1.000/10.000 transações sequencialmente no mesmo runner. Registra CPU, imagem, Python, bytes e SHA-256 dos artefatos baixados. Esses resultados têm prioridade para a recomendação; os tempos dos jobs de build ficam como diagnóstico. Cache do sistema operacional e carga do host não são controlados, e uma amostra de 10.000 transações não caracteriza distribuição de latência.
+
+## Resultado consolidado da retomada
+
+Execução [43407448255](https://github.com/vcsil/compararArquivosOFX/actions/runs/43407448255), commit `e41d639d7096473faa0c961853ee1a4198a65318`. Os jobs de testes Linux, testes Windows, PyInstaller, Nuitka e comparação terminaram com sucesso. As medidas abaixo vêm exclusivamente do job `comparison`, que baixou e revalidou os três artefatos no mesmo runner. Os hashes coincidem com os publicados pelos jobs de build.
+
+Ambiente de comparação: AMD EPYC 9V74 80-Core Processor, imagem `win25-vs2026/20261103.298.1`, Python 3.12.10. Ferramentas de build: PyInstaller 6.11.1 e Nuitka 2.5.9. Os runners de build e comparação são instâncias diferentes; nenhum resultado depende de manter seus processos vivos.
+
+Todos os candidatos passaram no menu, pasta do executável com espaços/acentos, início a partir de outro diretório, leitura e saída OFX sintética, original byte a byte preservado, reimportação com deduplicação e rejeição de conflito de FITID mantendo entrada e Geral intactos. A suíte local executou 126 testes: 115 aprovados, quatro ignorados por plataforma e sete falhas esperadas da baseline; os dois jobs nativos da suíte também foram aprovados. Os totais de skips Windows não foram extraídos de logs autenticados.
+
+| Candidato | EXE bytes | EXE MiB | Arquivos da distribuição | Distribuição bytes |
+|---|---:|---:|---:|---:|
+| PyInstaller onefile | 9828704 | 9.373 | 1 | 9828704 |
+| Nuitka standalone | 12111872 | 11.551 | 22 | 27917672 |
+| Nuitka onefile | 7929344 | 7.562 | 1 | 7929344 |
+
+| Candidato | SHA-256 do EXE |
+|---|---|
+| PyInstaller onefile | `5c14d78e30295b6134552bef3d6846f71772cdfee14ea0e48bd7360c42a9654c` |
+| Nuitka standalone | `6454ccf1bad1b542b9df5febf5cb139492f9ba2f2b59da1b4c619da863750fa5` |
+| Nuitka onefile | `2d2f7f87395ac70f09ffeff3bdf23aa74f9d84c8c170c43b5ac8ac91e5dbf307` |
+
+Tempos até o menu completo, em milissegundos. Primeira abertura observada, seguida de 15 execuções; p95 por posto mais próximo.
+
+| Candidato | Primeira | n subsequentes | Mediana | Mínimo | Máximo | p95 |
+|---|---:|---:|---:|---:|---:|---:|
+| PyInstaller onefile | 757.109 | 15 | 862.8712 | 351.083 | 1198.9808 | 1198.9808 |
+| Nuitka standalone | 245.5577 | 15 | 44.7825 | 43.7629 | 48.8047 | 48.8047 |
+| Nuitka onefile | 688.7537 | 15 | 742.0144 | 435.0168 | 1130.9713 | 1130.9713 |
+
+Processamento em milissegundos, incluindo inicialização do processo e excluindo geração do OFX sintético.
+
+| Candidato | Transações | n | Mediana | Mínimo | Máximo |
+|---|---:|---:|---:|---:|---:|
+| PyInstaller onefile | 100 | 3 | 1526.595 | 1327.500 | 1803.910 |
+| PyInstaller onefile | 1000 | 3 | 3778.572 | 3603.678 | 4293.146 |
+| PyInstaller onefile | 10000 | 1 | 26523.106 | 26523.106 | 26523.106 |
+| Nuitka standalone | 100 | 3 | 741.976 | 638.254 | 889.322 |
+| Nuitka standalone | 1000 | 3 | 3209.044 | 3177.715 | 3359.127 |
+| Nuitka standalone | 10000 | 1 | 30100.942 | 30100.942 | 30100.942 |
+| Nuitka onefile | 100 | 3 | 1728.166 | 1331.843 | 1915.392 |
+| Nuitka onefile | 1000 | 3 | 4118.128 | 4045.323 | 4226.398 |
+| Nuitka onefile | 10000 | 1 | 28299.472 | 28299.472 | 28299.472 |
+
+A primeira abertura não representa cache frio garantido. Não foi configurado cache persistente de extração. Os onefile precisam extrair seu runtime; o standalone precisa manter todos os arquivos auxiliares. Cache do SO, antivírus e carga do host não foram isolados. A amostra única de 10.000 transações verifica viabilidade, sem estimar p95 de processamento.
+
+Artefatos de teste, retidos por sete dias na página da execução: `comparaofx-pyinstaller-candidate`, `comparaofx-nuitka-candidate` (standalone completo e onefile) e `comparaofx-comparison-results` (relatório). O SHA-256 do ZIP exibido na lista de artefatos é diferente do SHA-256 do EXE acima. Nenhum binário substituiu o legado; nenhuma release ou merge em master foi realizado.
+
+### Recomendação e limites finais
+
+Recomendação para o requisito de arquivo único portátil: **Nuitka onefile**. Nessa medição no mesmo runner, foi aproximadamente 19% menor e teve mediana até o menu aproximadamente 14% menor que PyInstaller. Ambos passaram nos mesmos testes; não foi demonstrada diferença de confiabilidade. O PyInstaller teve processamento numericamente menor nas três cargas, sendo alternativa válida quando esse tempo pesar mais que abertura e tamanho. O standalone abriu mais rápido (44,8 ms de mediana), mas exige os 22 arquivos da distribuição e não atende à preferência por arquivo único. A meta de um segundo foi atingida na mediana dos dois onefile, mas não no p95; não é uma garantia em outro computador.
+
+A validação automatizada da Etapa 5 está aprovada. A conclusão integral permanece pendente de homologação em um Windows de destino sem Python instalado e da interação por duplo clique: os runners usados possuem Python para construir e executar os scripts de teste. O smoke move os executáveis para pastas isoladas, mas isso não comprova ausência de Python na máquina. Não foi testado cache persistente nem durabilidade após falta de energia; permanecem os limites documentados na Etapa 4.
+
+Para essa homologação, baixe `comparaofx-nuitka-candidate` na execução acima e separe `onefile/ComparaOFX.exe`. Em uma pasta de teste com espaços/acentos, coloque o EXE, uma cópia de `tests/fixtures/windows-manual/Entrada.ofx` e uma pasta vazia `Banco Sintetico`. Use somente esse extrato sintético. Confira o SHA-256 do EXE da tabela. Abra primeiro por duplo clique e cancele com `0`; depois inicie a partir de outro diretório e selecione `1`. Confirme que o Limpo e o Geral contêm o crédito de BRL 20 com FITID `SYNTH-1`, e que a cópia arquivada tem o mesmo SHA-256 da entrada sintética, registrada antes da execução. O terminal deve continuar visível após o processamento interativo. Registre versão do Windows, resultados e qualquer alerta de execução. Nenhuma instalação de Python deve ser necessária nesse computador.
+
+Commits de implementação publicados diretamente em `codex/comparaofx-2.0-etapa5`: `e2f86df` (volumes e stdin), `64b92e8` (regressão e métricas), `c2c981e` (primeira detecção Nuitka e standalone), `0d3af87` (smoke financeiro), `350b737` (raiz Nuitka corrigida após evidência nativa) e `e41d639` (comparação no mesmo runner). O commit documental final usa `[skip ci]` para não reconstruir binários cuja fonte não mudou; os resultados acima se referem explicitamente a `e41d639`. A Etapa 6 não foi iniciada.
