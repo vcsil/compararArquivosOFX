@@ -179,7 +179,11 @@ def executar(plano, *, bloqueio=None):
         safe_storage.escrever(temp_geral, plano.geral_bytes)
         if _hash(temp_geral) != hashlib.sha256(plano.geral_bytes).digest():
             raise OrganizacaoError('Falha na validação do Geral preparado')
-        if _assinatura(carregar_ofx(temp_geral)[1]) != plano.assinatura_geral:
+        # Se os bytes e a assinatura esperada são idênticos aos do Limpo já
+        # relido, o hash do Geral comprova o mesmo conteúdo validado. Em todos
+        # os demais casos o Geral é interpretado e conferido separadamente.
+        identico = plano.geral_bytes == plano.limpo and plano.assinatura_geral == assinatura_lida
+        if not identico and _assinatura(carregar_ofx(temp_geral)[1]) != plano.assinatura_geral:
             raise OrganizacaoError('Falha na validação do Geral preparado')
     manifest['estado'] = 'PREPARADO'
     safe_storage.atualizar_manifesto(op, manifest)

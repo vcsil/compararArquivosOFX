@@ -79,6 +79,15 @@ jobs:
           path: ${{ runner.temp }}/codex-pyinstaller/ComparaOFX.exe
           if-no-files-found: error
           retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: comparaofx-pyinstaller-inventory
+          path: |
+            ${{ runner.temp }}/codex-pyinstaller/inventory-pyinstaller.json
+            ${{ runner.temp }}/codex-pyinstaller/Analysis-00.toc
+            ${{ runner.temp }}/codex-pyinstaller/PYZ-00.toc
+          if-no-files-found: error
+          retention-days: 7
   nuitka:
     needs: tests
     runs-on: windows-latest
@@ -131,6 +140,16 @@ jobs:
           path: |
             ${{ runner.temp }}/codex-nuitka/onefile/ComparaOFX.exe
             ${{ runner.temp }}/codex-nuitka/standalone/comparaArqOFX.dist/
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: comparaofx-nuitka-inventory
+          path: |
+            ${{ runner.temp }}/codex-nuitka/standalone/compilation-report.xml
+            ${{ runner.temp }}/codex-nuitka/standalone/inventory-nuitka.json
+            ${{ runner.temp }}/codex-nuitka/onefile/compilation-report.xml
+            ${{ runner.temp }}/codex-nuitka/onefile/inventory-nuitka.json
           if-no-files-found: error
           retention-days: 7
   comparison:

@@ -261,15 +261,24 @@ class Seguranca(unittest.TestCase):
         with ss.bloquear(self.bank): ss.recuperar_concluida(self.bank)
         self.assertFalse(self.src.exists()); self.assertEqual((plan.importacao/self.src.name).read_bytes(),self.raw)
         self.assertEqual([t.fitid for t in carregar_ofx(self.geral)[1].statements[0].transactions],['A','B'])
-    def test_primeira_importacao_valida_semanticamente_ambos_arquivos(self):
+    def test_primeira_importacao_saida_identica_reutiliza_validacao(self):
         from controller import ofx_functions
         self.geral.unlink(); plan=self.plan(); real=ofx_functions.carregar_ofx; nomes=[]
         def read(path,*args,**kwargs):
             nomes.append(Path(path).name)
             return real(path,*args,**kwargs)
         with patch.object(ofx_functions,'carregar_ofx',side_effect=read): executar(plan)
-        self.assertEqual(nomes,[plan.limpo_nome,'geral.tmp'])
+        self.assertEqual(nomes,[plan.limpo_nome])
         self.assertEqual([t.fitid for t in carregar_ofx(self.geral)[1].statements[0].transactions],['A','B'])
+    def test_saida_distinta_exige_releitura_do_geral(self):
+        from controller import ofx_functions
+        plan=self.plan(); real=ofx_functions.carregar_ofx; nomes=[]
+        def read(path,*args,**kwargs):
+            nomes.append(Path(path).name)
+            return real(path,*args,**kwargs)
+        with patch.object(ofx_functions,'carregar_ofx',side_effect=read): executar(plan)
+        self.assertEqual(nomes,[plan.limpo_nome,'geral.tmp'])
+
     def test_geral_temporario_corrompido_e_detectado_mesmo_identico(self):
         self.geral.unlink(); plan=self.plan(); real=ss.escrever
         def corrupt(path,data):
