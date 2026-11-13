@@ -2,9 +2,9 @@ name: Windows validation and candidate builds
 on:
   workflow_dispatch:
   push:
-    branches: [codex/comparaofx-2.0-etapa5]
+    branches: [codex/comparaofx-2.0-etapa5, codex/comparaofx-2.0-etapa6]
   pull_request:
-    branches: [codex/comparaofx-2.0-etapa5]
+    branches: [codex/comparaofx-2.0-etapa5, codex/comparaofx-2.0-etapa6]
 permissions:
   contents: read
 jobs:

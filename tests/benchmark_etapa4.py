@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 from test_baseline import fixture
 from controller import workflow, safe_storage, ofx_functions
+from controller.ofx_names import eh_nome_limpo
 
 
 def stats(values):
@@ -38,7 +39,7 @@ for n in (100,1000):
                 finally: cm.__exit__(None,None,None)
             oldread=ofx_functions.carregar_ofx
             def read(path,*args,**kwargs):
-                if Path(path).name in ('OFX Limpo.ofx','geral.tmp'):
+                if (eh_nome_limpo(Path(path).name) or Path(path).name == 'geral.tmp'):
                     return timed('validacao_ofx',oldread)(path,*args,**kwargs)
                 return oldread(path,*args,**kwargs)
             start=time.perf_counter_ns()

@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 from decimal import Decimal
 from pathlib import Path
-from test_baseline import fixture, parse
+from test_baseline import limpo_em, fixture, parse
 from controller.ofx_comparison import analisar
 
 
@@ -115,7 +115,7 @@ class Comparacao(unittest.TestCase):
             (day/'OFXGeral-2023-01-02.ofx').write_bytes(fixture([tx(2,1,'a')]))
             current=root/'input.ofx'; current.write_bytes(fixture([tx(2,1,'a'),tx(3,-2,'b')]))
             dest=executar(planejar(root,bank,current,hoje=date(2023,1,2)))
-            self.assertEqual(ids(carregar_ofx(dest/'OFX Limpo.ofx')[1]),['b'])
+            self.assertEqual(ids(carregar_ofx(limpo_em(dest))[1]),['b'])
             self.assertEqual(ids(carregar_ofx(day/'OFXGeral-2023-01-02.ofx')[1]),['a','b'])
 
 if __name__=='__main__': unittest.main()

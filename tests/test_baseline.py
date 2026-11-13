@@ -15,6 +15,13 @@ def parse(data):
     p=OFXTree(); p.parse(io.BytesIO(data)); return p.convert()
 def fixture(items, encoding='ascii', account='123'): return HEADER+make(items,account).encode(encoding)
 def infos(o): return f.pegar_infos_transacoes(o,'2023-01-02')
+def limpo_em(pasta):
+    from controller.ofx_names import eh_nome_limpo
+    arquivos = [p for p in Path(pasta).iterdir() if eh_nome_limpo(p.name)]
+    if len(arquivos) != 1:
+        raise AssertionError(f'Esperado um OFX Limpo em {pasta}: {arquivos}')
+    return arquivos[0]
+
 class Baseline(unittest.TestCase):
     def test_01_sgml(self): self.assertEqual(parse(fixture([A])).statements[0].transactions[0].fitid,'2')
     def test_02_xml_v2(self):

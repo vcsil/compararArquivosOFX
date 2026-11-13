@@ -11,6 +11,7 @@ repo=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(repo/'tests'))
 from test_baseline import fixture
 from controller.ofx_functions import carregar_ofx
+from controller.ofx_names import eh_nome_limpo
 
 
 def main():
@@ -37,6 +38,9 @@ def main():
                 copied=list(bank.rglob('entrada.ofx')); general=list(bank.rglob('OFXGeral-*.ofx'))
                 if len(copied)!=1 or len(general)!=1 or hashlib.sha256(copied[0].read_bytes()).digest()!=hashlib.sha256(data).digest():
                     raise AssertionError('Original ou Geral sintético não encontrado/preservado')
+                clean = [p for p in bank.rglob('*.ofx') if eh_nome_limpo(p.name, legado=False)]
+                if len(clean) != 1 or len(carregar_ofx(clean[0])[1].statements[0].transactions) != n:
+                    raise AssertionError('Nome ou conteúdo incorreto no Limpo sintético')
                 if len(carregar_ofx(general[0])[1].statements[0].transactions)!=n:
                     raise AssertionError('Quantidade incorreta no Geral sintético')
                 samples.append(elapsed)

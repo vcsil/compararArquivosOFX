@@ -4,7 +4,7 @@ import unittest
 from datetime import date
 from pathlib import Path
 from unittest.mock import patch
-from test_baseline import fixture
+from test_baseline import limpo_em, fixture
 from controller.organization import (instituicoes, extratos, anexos, pasta_dia, proxima_importacao, localizar_historico, raiz_aplicacao, OrganizacaoError)
 from controller.user_navigation import selecionar, Cancelado
 from controller.workflow import planejar, executar
@@ -51,19 +51,19 @@ class Organizacao(unittest.TestCase):
         self.assertTrue(dest.samefile(pasta_dia(self.bank,D)/'001'))
         self.assertEqual((dest/'Extrato.ofx').read_bytes(),raw)
         self.assertEqual((dest/'anexo.pdf').read_bytes(),b'documento sintetico')
-        self.assertFalse(source.exists()); self.assertEqual(ids(dest/'OFX Limpo.ofx'),['A','B'])
+        self.assertFalse(source.exists()); self.assertEqual(ids(limpo_em(dest)),['A','B'])
         self.assertEqual(ids(plan.geral),['A','B'])
     def test_segunda_importacao_e_sem_novidades(self):
         src=self.root/'one.ofx'; src.write_bytes(fixture([tx(10,'A')]))
         executar(planejar(self.root,self.bank,src,hoje=D))
         src=self.root/'two.ofx'; src.write_bytes(fixture([tx(10,'A'),tx(11,'B')]))
         plan=planejar(self.root,self.bank,src,hoje=D); dest=executar(plan)
-        self.assertEqual(dest.name,'002'); self.assertEqual(ids(dest/'OFX Limpo.ofx'),['B'])
+        self.assertEqual(dest.name,'002'); self.assertEqual(ids(limpo_em(dest)),['B'])
         self.assertEqual(ids(plan.geral),['A','B'])
         src=self.root/'three.ofx'; src.write_bytes(fixture([tx(10,'A'),tx(11,'B')]))
         plan=planejar(self.root,self.bank,src,hoje=D); self.assertEqual(plan.resultado.relatorio.estado,'SEM_NOVIDADES')
         before=plan.geral.read_bytes(); dest=executar(plan)
-        self.assertEqual(dest.name,'003'); self.assertEqual(ids(dest/'OFX Limpo.ofx'),[])
+        self.assertEqual(dest.name,'003'); self.assertEqual(ids(limpo_em(dest)),[])
         self.assertEqual(plan.geral.read_bytes(),before)
     def test_historico_cronologico(self):
         old=self.old(date(2024,12,31),[tx(10,'A')]); recent=self.old(date(2025,1,1),[tx(10,'A')])
@@ -134,7 +134,7 @@ class Organizacao(unittest.TestCase):
         plan=planejar(self.root,self.bank,src,hoje=D)
         self.assertEqual(plan.resultado.relatorio.estado,'SEM_NOVIDADES')
         output=executar(plan)
-        self.assertEqual(ids(output/'OFX Limpo.ofx'),[])
+        self.assertEqual(ids(limpo_em(output)),[])
         self.assertEqual(ids(plan.geral),['A']); self.assertEqual(ids(anterior),['A'])
     def test_arquivo_modificado_apos_plano_bloqueia(self):
         src=self.root/'x.ofx'; src.write_bytes(fixture([tx(10,'A')]))
@@ -158,7 +158,7 @@ class Organizacao(unittest.TestCase):
         plan=planejar(self.root,self.bank,src,hoje=D)
         self.assertEqual(plan.resultado.relatorio.estado,'SEM_NOVIDADES')
         output=executar(plan)
-        self.assertEqual(ids(output/'OFX Limpo.ofx'),[])
+        self.assertEqual(ids(limpo_em(output)),[])
         self.assertEqual(ids(plan.geral),['A']); self.assertEqual(ids(anterior),['A'])
     def test_arquivo_modificado_apos_plano_bloqueia_repeticao(self):
         src=self.root/'x.ofx'; src.write_bytes(fixture([tx(10,'A')]))

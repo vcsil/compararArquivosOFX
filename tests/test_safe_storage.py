@@ -7,7 +7,7 @@ import unittest
 from datetime import date
 from pathlib import Path
 from unittest.mock import patch
-from test_baseline import fixture
+from test_baseline import limpo_em, fixture
 from controller import safe_storage as ss
 from controller.workflow import planejar, executar
 from controller.organization import OrganizacaoError, pasta_dia
@@ -179,7 +179,7 @@ class Seguranca(unittest.TestCase):
     def test_falha_gravar_limpo_nao_publica(self):
         plan=self.plan(); real=ss.escrever
         def fail(path,data):
-            if Path(path).name=='OFX Limpo.ofx': raise PermissionError('arquivo bloqueado')
+            if Path(path).name==plan.limpo_nome: raise PermissionError('arquivo bloqueado')
             return real(path,data)
         with patch.object(ss,'escrever',side_effect=fail):
             with self.assertRaises(PermissionError): executar(plan)
@@ -268,7 +268,7 @@ class Seguranca(unittest.TestCase):
             nomes.append(Path(path).name)
             return real(path,*args,**kwargs)
         with patch.object(ofx_functions,'carregar_ofx',side_effect=read): executar(plan)
-        self.assertEqual(nomes,['OFX Limpo.ofx'])
+        self.assertEqual(nomes,[plan.limpo_nome])
         self.assertEqual([t.fitid for t in carregar_ofx(self.geral)[1].statements[0].transactions],['A','B'])
     def test_geral_temporario_corrompido_e_detectado_mesmo_identico(self):
         self.geral.unlink(); plan=self.plan(); real=ss.escrever
@@ -285,7 +285,7 @@ class Seguranca(unittest.TestCase):
         with patch.object(ss,'publicar_arquivo',side_effect=AssertionError('não deve regravar')):
             dest=executar(plan)
         self.assertEqual(self.geral.read_bytes(),before)
-        self.assertEqual(carregar_ofx(dest/'OFX Limpo.ofx')[1].statements[0].transactions,[])
+        self.assertEqual(carregar_ofx(limpo_em(dest))[1].statements[0].transactions,[])
     def test_manifesto_corrompido_e_orfao_bloqueiam(self):
         op=self.bank/'.comparaofx'/'orfao'; op.mkdir(parents=True); (op/'manifesto.json').write_text('{')
         with ss.bloquear(self.bank):
@@ -310,7 +310,7 @@ class Seguranca(unittest.TestCase):
             ss.recuperar_concluida(self.bank); ss.recuperar_concluida(self.bank)
         self.assertEqual(self.geral.read_bytes(),before)
         self.assertEqual((plan.importacao/self.src.name).read_bytes(),self.old)
-        self.assertEqual(carregar_ofx(plan.importacao/'OFX Limpo.ofx')[1].statements[0].transactions,[])
+        self.assertEqual(carregar_ofx(limpo_em(plan.importacao))[1].statements[0].transactions,[])
     def test_bloqueio_independente_e_liberacao(self):
         other=self.root/'Outro'; other.mkdir()
         with ss.bloquear(self.bank):
