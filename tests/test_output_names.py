@@ -38,7 +38,7 @@ class NomesERecuperacao(unittest.TestCase):
         elif stage == 'parcial':
             real = Path.unlink
             def unlink(path, *args, **kwargs):
-                removed_source = path == self.src
+                removed_source = path.exists() and path.samefile(self.src)
                 result = real(path, *args, **kwargs)
                 if removed_source: raise OSError('interrupção após remover original')
                 return result
@@ -213,6 +213,17 @@ class NomesERecuperacao(unittest.TestCase):
         ss.recuperar_concluida(self.bank)
         self.assertFalse(plan.importacao.exists()); self.assertEqual(ss.pendencias(self.bank),[])
         self.assertEqual(self.src.read_bytes(),self.raw)
+
+    def test_recuperacao_legada_apos_remocao_parcial(self):
+        plan,op,m=self.interrupted('parcial')
+        (plan.importacao/NOME).rename(plan.importacao/LEGADO_LIMPO)
+        before=(plan.importacao/LEGADO_LIMPO).read_bytes()
+        m['versao']=1; m.pop('limpo_nome'); ss.atualizar_manifesto(op,m)
+        self.assertFalse(self.src.exists()); self.assertTrue(self.pdf.exists())
+        ss.recuperar_concluida(self.bank)
+        self.assertFalse(self.pdf.exists()); self.assertEqual(ss.pendencias(self.bank),[])
+        self.assertEqual((plan.importacao/LEGADO_LIMPO).read_bytes(),before)
+        self.assertFalse((plan.importacao/NOME).exists())
 
     def test_hash_legado_obrigatorio(self):
         plan,op,m=self.interrupted()
