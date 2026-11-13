@@ -26,6 +26,12 @@ $detections = @(Get-MpThreatDetection -ErrorAction Stop | Where-Object {
 })
 if ($detections.Count) {
     $detections | Format-List * | Out-String | Write-Output
+    if (Get-Command Get-MpThreat -ErrorAction SilentlyContinue) {
+        foreach ($detection in $detections) {
+            try { Get-MpThreat -ThreatID $detection.ThreatID -ErrorAction Stop | Select-Object ThreatID,ThreatName,SeverityID | Format-List | Out-String | Write-Output }
+            catch { Write-Warning ('Nome indisponivel para ThreatID ' + $detection.ThreatID) }
+        }
+    }
     throw 'Defender registrou deteccao no candidato; suspender aprovacao e analisar o resultado.'
 }
 if (-not (Test-Path -LiteralPath $target -PathType Leaf)) { throw 'Candidato ausente apos verificacao Defender.' }

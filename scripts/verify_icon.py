@@ -16,7 +16,8 @@ def read(entry):
     return pe.get_data(d.OffsetToData, d.Size)
 reference = Image.open(ico)
 expected = reference.ico.sizes()
-for group in groups:
+# O primeiro grupo de recursos é o ícone principal enumerado pelo Windows.
+for group in groups[:1]:
     data = read(group)
     _, kind, count = struct.unpack_from('<HHH', data)
     if kind != 1: continue

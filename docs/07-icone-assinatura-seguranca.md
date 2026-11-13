@@ -6,14 +6,9 @@ Em 13/11/2026, o Microsoft Defender sinalizou uma execução do candidato Nuitka
 
 **Não permitir o arquivo sinalizado nem desativar o antivírus.** Mantenha-o em quarentena e faça verificação completa. Submeta a versão exata do binário para reanálise oficial em https://www.microsoft.com/en-us/wdsi/filesubmission/ e guarde o identificador da submissão e o parecer. Não compartilhe OFX reais com serviços de análise ou scanners públicos.
 
-## Ícone da versão antiga
+## Ícone da versão antiga e recurso atual
 
-O repositório conserva `dist/Compara OFX.exe`. Sem alterar esse arquivo, `scripts/build_windows.ps1` configura:
-
-- PyInstaller: `--icon=<caminho do EXE legado>,0` para extrair o primeiro ícone.
-- Nuitka standalone/onefile: `--windows-icon-from-exe=<caminho do EXE legado>`.
-
-O build deve validar em Windows que o recurso de ícone foi realmente reproduzido. Se o legado não tiver o recurso de ícone esperado, falhar ou corrigir explicitamente, sem inventar arte visual. **O ícone é apenas identidade visual: não cria confiança nem altera a segurança do binário.**
+O repositório conserva `dist/Compara OFX.exe`, sem modificá-lo. A configuração inicial desta branch extraía o ícone diretamente desse EXE. A revisão atual extraiu sua única imagem RGBA e armazenou a versão azul em `assets/comparaofx-2.0-azul.ico`; o build agora fornece esse arquivo a PyInstaller (`--icon`) e Nuitka (`--windows-icon-from-ico`) e verifica os recursos incorporados antes do smoke. O ícone é apenas identidade visual e não altera a segurança do binário.
 
 ## Assinatura real
 
@@ -50,7 +45,7 @@ Não modificar o motor de deduplicação, históricos reais, nem permitir escalo
 
 O executável legado contém um único recurso PNG RGBA de 256 × 256. `scripts/recolor_icon.py` lê o recurso PE com `pefile`, preserva geometria, alfa e pixels neutros, e substitui matizes verdes por azul de matiz 221° (referência #2563EB), mantendo variações de brilho e saturação. Para reproduzir com as versões usadas na geração, instale `pefile==2024.8.26` e `Pillow==13.0.0`; execute `venv/bin/python scripts/recolor_icon.py` na raiz. Foram gerados PNG, comparação visual e ICO com 16, 24, 32, 48, 64, 128 e 256 pixels; os tamanhos menores são reamostrados do único original.
 
-Ambos empacotadores usam `assets/comparaofx-2.0-azul.ico`. `scripts/verify_icon.py` lê os recursos PE e compara imagens e alfa com cada resolução do ICO, antes do smoke financeiro e da assinatura opcional. O build instala `pefile==2024.8.26` e `Pillow==11.3.0` para essa inspeção. A compilação normal permanece sem certificado e os candidatos são não assinados.
+Ambos empacotadores usam `assets/comparaofx-2.0-azul.ico`. `scripts/verify_icon.py` lê o primeiro grupo de ícones do PE e compara imagens e alfa com cada resolução do ICO, antes do smoke financeiro e da assinatura opcional. O build instala `pefile==2024.8.26` e `Pillow==11.3.0` para essa inspeção. A compilação normal permanece sem certificado e os candidatos são não assinados.
 
 A detecção anterior `Program:Win32/Contebrew.A!ml` não foi esclarecida. Não há Microsoft Defender neste ambiente Linux; a alteração visual não constitui correção de segurança. Resultados Windows, inspeção PE, hashes e benchmarks dependem da execução do workflow e devem ser confirmados antes de recomendar qualquer candidato. Caso haja detecção, interrompa a aprovação e submeta o binário à Microsoft para análise oficial, sem dados reais.
 
@@ -59,3 +54,11 @@ O build consulta o estado do Defender no Windows e, quando ativo, tenta atualiza
 A revisão estática da aplicação não identificou comandos externos, persistência ou comunicação de rede. Os subprocessos encontrados executam candidatos sintéticos nos scripts de teste; a compilação instala dependências do PyPI e Nuitka pode baixar ferramentas adicionais. `colorama` e `ofxtools` estão fixados; dependências transitivas e imagens de CI não são fixadas por hash. Essa revisão não verifica a integridade de todos os artefatos de terceiros nem prova a segurança dos executáveis.
 
 Sem certificado, o build exige que `Get-AuthenticodeSignature` retorne `NotSigned`; com certificado configurado, o script opcional valida a assinatura.
+
+As actions do GitHub usadas no workflow são referenciadas por tags de versão, não por commits imutáveis. Os pacotes diretos do build têm versões selecionadas; downloads transitivos e ferramentas externas do Nuitka não têm hashes fixados neste repositório. A receita e os hashes finais permitem identificar os resultados, mas não garantem reconstrução binária idêntica nem estabelecem a integridade independente de toda a cadeia.
+
+## Preparação para análise oficial da detecção anterior
+
+A amostra anteriormente sinalizada continua sem diagnóstico. O hash do arquivo efetivamente detectado e a versão das assinaturas usadas naquela detecção não foram fornecidos; não se deve presumir que coincidam com os binários reconstruídos nesta execução. Preserve a amostra em quarentena e obtenha os dados diretamente do histórico de proteção. Não use extratos ou históricos reais como amostras.
+
+Para revisão antes do envio em https://www.microsoft.com/en-us/wdsi/filesubmission/, preencha com o hash da amostra exata, nome `Program:Win32/Contebrew.A!ml`, data/hora e fuso da ocorrência, versão das assinaturas Defender, versão do Windows e contexto de que o alerta ocorreu antes do menu. Texto sugerido: “Solicito análise deste executável; o Microsoft Defender o identificou como Program:Win32/Contebrew.A!ml antes da abertura do menu. A causa ainda não foi determinada. SHA-256: [hash da amostra exata]. Versão das assinaturas: [versão observada].” Anexe somente a amostra solicitada pela Microsoft e registre o identificador e o parecer. Nenhuma submissão foi feita nesta sessão.
