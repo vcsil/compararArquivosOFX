@@ -32,7 +32,17 @@ jobs:
           python-version: '3.12'
       - name: Build and smoke test PyInstaller
         shell: pwsh
-        run: ./scripts/build_windows.ps1 -Tool pyinstaller -OutputDir "$env:RUNNER_TEMP/codex-pyinstaller"
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP 'compara-build-pyinstaller.log'
+          try {
+            & ./scripts/build_windows.ps1 -Tool pyinstaller -OutputDir "$env:RUNNER_TEMP/codex-pyinstaller" *>&1 | Tee-Object -FilePath $log
+            if (-not $?) { throw 'Build PyInstaller retornou falha.' }
+          } catch {
+            $tail = if (Test-Path -LiteralPath $log) { (Get-Content -LiteralPath $log -Tail 35) -join "`n" } else { '' }
+            $message = ("$($_.Exception.Message)`n$tail").Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
+            Write-Output "::error title=Diagnóstico sintético do build::$message"
+            throw
+          }
       - name: Benchmark PyInstaller onefile
         shell: pwsh
         run: |
@@ -56,7 +66,17 @@ jobs:
           python-version: '3.12'
       - name: Build and smoke test Nuitka standalone and onefile
         shell: pwsh
-        run: ./scripts/build_windows.ps1 -Tool nuitka -OutputDir "$env:RUNNER_TEMP/codex-nuitka"
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP 'compara-build-nuitka.log'
+          try {
+            & ./scripts/build_windows.ps1 -Tool nuitka -OutputDir "$env:RUNNER_TEMP/codex-nuitka" *>&1 | Tee-Object -FilePath $log
+            if (-not $?) { throw 'Build Nuitka retornou falha.' }
+          } catch {
+            $tail = if (Test-Path -LiteralPath $log) { (Get-Content -LiteralPath $log -Tail 35) -join "`n" } else { '' }
+            $message = ("$($_.Exception.Message)`n$tail").Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
+            Write-Output "::error title=Diagnóstico sintético do build::$message"
+            throw
+          }
       - name: Benchmark Nuitka onefile
         shell: pwsh
         run: |
