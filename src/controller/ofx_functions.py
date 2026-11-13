@@ -5,21 +5,17 @@ Created on Wed Jul  5 12:03:33 2023
 @author: vsil
 """
 
-from ofxtools.Parser import OFXTree
-import xml.etree.ElementTree as ET
-import xml.dom.minidom
+from .ofx_io import preparar_ofx, interpretar_ofx, serializar_ofx
 from datetime import datetime
 import os
 
 
-def carregar_ofx(ofx_dir):
-    parser = OFXTree()
+def carregar_ofx(ofx_dir, *, codificacao=None):
     with open(ofx_dir, 'rb') as arquivo_ofx:
-        parser.parse(arquivo_ofx)
-        headers = str(parser.header).replace("\r\n", "\n")
-
-        ofx = parser.convert()
-        return headers, ofx
+        formato, headers, corpo = preparar_ofx(arquivo_ofx.read(), codificacao=codificacao)
+    ofx = interpretar_ofx(formato, corpo)
+    ofx._caminho_origem = os.path.abspath(ofx_dir)
+    return headers, ofx
 
 
 def pegar_dia_insterseccao(ofx, ultimo_dia_ofx_anterior):
@@ -95,31 +91,25 @@ def remove_anteriores(ofx, data_interseccao):
     return ofx
 
 
-def salvar_ofx(ofx, headers, diretorio, nome=""):
-    # Aproxima de XML
-    ofx = ofx.to_etree()
-    # Converte para bytes
-    ofx = ET.tostring(ofx)
-    # Converte para string
-    ofx = ofx.decode()
-
-    # Analisar o arquivo XML
-    ofx = xml.dom.minidom.parseString(ofx)
-    # Indentar o XML
-    ofx = ofx.toprettyxml(indent="\t")[23:]
-    # Adiciona Header
-    ofx = headers + ofx
-
-    # Salvar o XML indentado em um novo arquivo
-    if (nome == ""):
-        nome_arq = "\\OFX Limpo-" + datetime.now().strftime("%d%m%Y%H%M") + ".ofx"
-    else:
-        nome_arq = "\\" + nome
-
-    with open(diretorio+nome_arq, 'w') as file:
-        file.write(ofx)
-
-    return diretorio+nome_arq
+def salvar_ofx(ofx, headers, diretorio, nome="", *, _permitir_atualizar_historico=False):
+    # A saída usa OFX 2.03/UTF-8 independentemente do cabeçalho de entrada.
+    conteudo = serializar_ofx(ofx)
+    if nome == "":
+        nome = "OFX Limpo-" + datetime.now().strftime("%d%m%Y%H%M") + ".ofx"
+    caminho = os.path.join(diretorio, nome)
+    origem = getattr(ofx, '_caminho_origem', None)
+    if origem and not _permitir_atualizar_historico:
+        igual = os.path.realpath(origem) == os.path.realpath(caminho)
+        if not igual and os.path.exists(caminho):
+            igual = os.path.samefile(origem, caminho)
+        if igual:
+            raise ValueError('O arquivo de origem não pode ser sobrescrito')
+    if not _permitir_atualizar_historico and os.path.exists(caminho):
+        raise FileExistsError('O arquivo de destino já existe')
+    modo = 'wb' if _permitir_atualizar_historico else 'xb'
+    with open(caminho, modo) as file:
+        file.write(conteudo)
+    return caminho
 
 
 def salvar_ofx_geral(ofx, header, diretorio_atual):
@@ -136,7 +126,7 @@ def salvar_ofx_geral(ofx, header, diretorio_atual):
             ofx_geral = junta_transacoes(ofx_geral, ofx)
 
             # Salva arquivo atualizado
-            return salvar_ofx(ofx_geral, header_geral, diretorio_anterior, item)
+            return salvar_ofx(ofx_geral, header_geral, diretorio_anterior, item, _permitir_atualizar_historico=True)
 
     # Caso não tenho o OFX geral vai criar.
     return salvar_ofx(ofx, header, diretorio_anterior, f"OFXGeral-{split_dir_atual[-2]}.ofx")

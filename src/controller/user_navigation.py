@@ -1,109 +1,63 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Tue Jul  4 17:29:53 2023
+"""Menus simples para escolher arquivos e instituições."""
+from .organization import instituicoes, extratos, anexos, raiz_aplicacao
+from .terminal_style import Terminal
 
-@author: vsil
-"""
-
-from datetime import datetime, timezone, timedelta
-import os
-from colorama import init, Fore, Style, Back
-
-init()
-
-timezone_offset = -3.0  # UTC (-3) Brasil
-tzinfo = timezone(timedelta(hours=timezone_offset))
-
-dict_inst_financeira = {1: "Banco do Brasil",
-                        2: "Itau",
-                        3: "PagSeguro"}
-
-dict_mes = {'01': "Jan",
-            '02': "Fev",
-            '03': "Mar",
-            '04': "Abr",
-            '05': "Mai",
-            '06': "Jun",
-            '07': "Jul",
-            '08': "Ago",
-            '09': "Set",
-            '10': "Out",
-            '11': "Nov",
-            '12': "Dez"}
+class Cancelado(Exception):
+    pass
 
 
-def define_diretorio():
-    pergunta = "Diretório atual [0] ou diretorio central [1]: "
-    lugar = pergunta_para_usuario(pergunta, [1, 0])
-
-    if (lugar):
-        return define_diretorio_central()
-    else:
-        print("Usado quando o script está em um unico arquivo python.")
-        return os.getcwd()
-
-
-def pergunta_para_usuario(pergunta, resp_esperada):
-    # Tratar a o input do usuario
-    resposta = ''
-    while (resposta not in resp_esperada):
-        try:
-            resposta = input(pergunta)
-            resposta = int(resposta)
-
-            if (resposta not in resp_esperada):
-                raise ValueError
-
-        except ValueError:
-            print(Back.RED + "Entrada errada\n" + Style.RESET_ALL)
-        else:
-            return resposta
-            break
+def escolher(opcoes, titulo, entrada=input, saida=print):
+    tela = Terminal(saida)
+    tela.texto(titulo, 'cabecalho')
+    for i, item in enumerate(opcoes, 1):
+        tela.opcao(i, item.name)
+    tela.texto('00 - Cancelar', 'aviso')
+    while True:
+        valor = entrada('Escolha: ').strip()
+        if valor.isdigit() and int(valor) == 0:
+            raise Cancelado()
+        if valor.isdigit() and 1 <= int(valor) <= len(opcoes):
+            return opcoes[int(valor)-1]
+        tela.texto('Entrada inválida.', 'aviso')
 
 
-def define_diretorio_central():
-    print(Style.BRIGHT + "Informe a instituição financeira:\n")
-    print(Fore.YELLOW + "01 - Banco do Brasil")
-    print(Fore.RED + "02 - Itaú")
-    print(Fore.GREEN + "03 - PagSeguro")
-    print(Style.RESET_ALL + "04 - Informe outro")
-    print("-"*36 + "\n")
+def escolher_anexos(opcoes, entrada=input, saida=print):
+    if not opcoes:
+        return []
+    tela = Terminal(saida)
+    tela.texto('Anexos disponíveis:', 'cabecalho')
+    for i, item in enumerate(opcoes, 1):
+        tela.opcao(i, item.name)
+    while True:
+        valor = entrada('Números separados por vírgula, T para todos, N para nenhum ou C para cancelar: ').strip().casefold()
+        if valor == 'c':
+            raise Cancelado()
+        if valor == 'n':
+            return []
+        if valor == 't':
+            return list(opcoes)
+        partes = [x.strip() for x in valor.split(',')]
+        if all(x.isdigit() and 1 <= int(x) <= len(opcoes) for x in partes):
+            indices = {int(x)-1 for x in partes}
+            return [p for i, p in enumerate(opcoes) if i in indices]
+        tela.texto('Entrada inválida.', 'aviso')
 
-    inst_finan = pergunta_para_usuario('', [1, 2, 3, 4])
 
-    if (inst_finan == 4):
-        diretorio = input("Digite o diretório: ")
-        print("\n")
-        return diretorio
-    else:
-        diretorio = retorna_diretorio_hoje(dict_inst_financeira[inst_finan])
-        print("")
-
-    return diretorio
-
-
-def retorna_diretorio_hoje(inst_financeira):
-    data_agora = datetime.now(tzinfo)
-    ano = data_agora.today().strftime("%Y")
-    mes = data_agora.today().strftime("%m")
-    dia = data_agora.today().strftime("%d")
-
-    diretorio = ".\\" + inst_financeira + "\\" + ano + "\\"
-    diretorio += mes + " - " + dict_mes[mes] + " " + ano + "\\"
-    diretorio += ano + "-" + mes + "-" + dia
-
-    # Procurar o ulitmo diretório criado
-    # Pega tudo dentro do diretório e o tamanho
-    lista_arq = os.listdir(diretorio)
-    len_lista_arq = len(lista_arq)
-    # Vai passando até encontrar o último que não é ofx
-    for idx in range(len_lista_arq-1, -1, -1):
-        pos = idx - len_lista_arq
-        nome = os.listdir(diretorio)[pos]
-        if ".ofx" not in nome:
-            ultima_pasta = nome
-            break
-
-    diretorio += '\\' + ultima_pasta
-
-    return diretorio
+def selecionar(raiz, entrada=input, saida=print):
+    tela = Terminal(saida)
+    arquivos = extratos(raiz)
+    if not arquivos:
+        tela.texto('Nenhum arquivo OFX encontrado na raiz.', 'aviso')
+        return None
+    arquivo = arquivos[0] if len(arquivos) == 1 else escolher(arquivos, 'Arquivos OFX encontrados:', entrada, saida)
+    tela.texto('Arquivo selecionado: ' + arquivo.name)
+    bancos = instituicoes(raiz)
+    if not bancos:
+        tela.texto('Nenhuma pasta de instituição encontrada.', 'aviso')
+        return None
+    banco = escolher(bancos, 'Selecione a instituição:', entrada, saida)
+    tela.texto('Instituição escolhida: ' + banco.name)
+    disponiveis = anexos(raiz)
+    selecionados = disponiveis if len(arquivos) == 1 else escolher_anexos(disponiveis, entrada, saida)
+    tela.texto(f'Anexos selecionados: {len(selecionados)} - ' + (', '.join(p.name for p in selecionados) or 'nenhum'))
+    return banco, arquivo, selecionados

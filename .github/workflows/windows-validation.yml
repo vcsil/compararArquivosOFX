@@ -1,0 +1,241 @@
+name: Windows validation and candidate builds
+on:
+  workflow_dispatch:
+  push:
+    branches: [master, codex/comparaofx-2.0-etapa5, codex/comparaofx-2.0-etapa6, codex/comparaofx-2.0-icone-assinatura, codex/comparaofx-2.0-otimizacao-segura, codex/comparaofx-2.0-colorama]
+  pull_request:
+    branches: [master, codex/comparaofx-2.0-etapa5, codex/comparaofx-2.0-etapa6, codex/comparaofx-2.0-icone-assinatura, codex/comparaofx-2.0-otimizacao-segura, codex/comparaofx-2.0-colorama]
+permissions:
+  contents: read
+jobs:
+  tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - name: Python suite with synthetic failure diagnostics
+        shell: bash
+        run: |
+          status=0
+          python -m unittest discover -s tests -v > "$RUNNER_TEMP/compara-tests.log" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/compara-tests.log"
+          if [ "$status" -ne 0 ]; then
+            python -c 'import os,pathlib; p=pathlib.Path(os.environ["RUNNER_TEMP"])/"compara-tests.log"; s=p.read_bytes().decode("utf-8",errors="backslashreplace"); s=s[s.find("======================================================================"):] if "======================================================================" in s else s; s=s[-3500:]; print("::error title=Synthetic test failure::"+s.replace("%","%25").replace("\r","%0D").replace("\n","%0A"))'
+          fi
+          exit "$status"
+  pyinstaller:
+    needs: tests
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build and smoke test PyInstaller
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP 'compara-build-pyinstaller.log'
+          try {
+            & ./scripts/build_windows.ps1 -Tool pyinstaller -OutputDir "$env:RUNNER_TEMP/codex-pyinstaller" *>&1 | Tee-Object -FilePath $log
+            if (-not $?) { throw 'Build PyInstaller retornou falha.' }
+          } catch {
+            $tail = if (Test-Path -LiteralPath $log) { (Get-Content -LiteralPath $log -Tail 35) -join "`n" } else { '' }
+            $message = ("$($_.Exception.Message)`n$tail").Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
+            Write-Output "::error title=Diagnóstico sintético do build::$message"
+            throw
+          }
+      - name: Benchmark PyInstaller onefile
+        shell: pwsh
+        run: |
+          $exe = "$env:RUNNER_TEMP/codex-pyinstaller/ComparaOFX.exe"
+          $startup = & ./scripts/benchmark_windows.ps1 -Exe $exe -Runs 15
+          $startup | Write-Output
+          python -m pip install -r requirements.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Instalação do benchmark falhou.' }
+          $processing = & python scripts/benchmark_exe_processing.py $exe
+          if ($LASTEXITCODE -ne 0) { throw 'Benchmark de processamento falhou.' }
+          $processing | Write-Output
+          $file = Get-Item -LiteralPath $exe
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash
+          $distribution = if ($exe.Contains('.dist/')) { @(Get-ChildItem -LiteralPath $file.DirectoryName -Recurse -File) } else { @($file) }
+          $totalBytes = ($distribution | Measure-Object -Property Length -Sum).Sum
+          $runtime = & python --version
+          $cpu = (Get-CimInstance Win32_Processor | Select-Object -First 1).Name
+          $report = (@("candidato=PyInstaller onefile; smoke=PASS; bytes=$($file.Length); MiB=$($file.Length / 1MB); SHA256=$hash; distribution_files=$($distribution.Count); distribution_bytes=$totalBytes; Python=$runtime; CPU=$cpu; commit=$env:GITHUB_SHA; imagem=$env:ImageOS/$env:ImageVersion") + @($startup) + @($processing)) -join "`n"
+          $report | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+          $escaped = $report.Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
+          Write-Output "::notice title=Resultado sintético PyInstaller::$escaped"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: comparaofx-pyinstaller-candidate
+          path: ${{ runner.temp }}/codex-pyinstaller/ComparaOFX.exe
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: comparaofx-pyinstaller-inventory
+          path: |
+            ${{ runner.temp }}/codex-pyinstaller/inventory-pyinstaller.json
+            ${{ runner.temp }}/codex-pyinstaller/Analysis-00.toc
+            ${{ runner.temp }}/codex-pyinstaller/PYZ-00.toc
+          if-no-files-found: error
+          retention-days: 7
+  nuitka:
+    needs: tests
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build and smoke test Nuitka standalone and onefile
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP 'compara-build-nuitka.log'
+          try {
+            & ./scripts/build_windows.ps1 -Tool nuitka -OutputDir "$env:RUNNER_TEMP/codex-nuitka" *>&1 | Tee-Object -FilePath $log
+            if (-not $?) { throw 'Build Nuitka retornou falha.' }
+          } catch {
+            $tail = if (Test-Path -LiteralPath $log) { (Get-Content -LiteralPath $log -Tail 35) -join "`n" } else { '' }
+            $message = ("$($_.Exception.Message)`n$tail").Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
+            Write-Output "::error title=Diagnóstico sintético do build::$message"
+            throw
+          }
+      - name: Benchmark Nuitka standalone and onefile
+        shell: pwsh
+        run: |
+          foreach ($variant in @('standalone', 'onefile')) {
+            $relative = if ($variant -eq 'standalone') { 'standalone/comparaArqOFX.dist/comparaArqOFX.exe' } else { 'onefile/ComparaOFX.exe' }
+            $exe = "$env:RUNNER_TEMP/codex-nuitka/$relative"
+            $startup = & ./scripts/benchmark_windows.ps1 -Exe $exe -Runs 15
+            $startup | Write-Output
+            python -m pip install -r requirements.txt
+            if ($LASTEXITCODE -ne 0) { throw 'Instalação do benchmark falhou.' }
+            $processing = & python scripts/benchmark_exe_processing.py $exe
+            if ($LASTEXITCODE -ne 0) { throw 'Benchmark de processamento falhou.' }
+            $processing | Write-Output
+            $file = Get-Item -LiteralPath $exe
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash
+            $distribution = if ($exe.Contains('.dist/')) { @(Get-ChildItem -LiteralPath $file.DirectoryName -Recurse -File) } else { @($file) }
+            $totalBytes = ($distribution | Measure-Object -Property Length -Sum).Sum
+            $runtime = & python --version
+            $cpu = (Get-CimInstance Win32_Processor | Select-Object -First 1).Name
+            $report = (@("candidato=Nuitka $variant; smoke=PASS; bytes=$($file.Length); MiB=$($file.Length / 1MB); SHA256=$hash; distribution_files=$($distribution.Count); distribution_bytes=$totalBytes; Python=$runtime; CPU=$cpu; commit=$env:GITHUB_SHA; imagem=$env:ImageOS/$env:ImageVersion") + @($startup) + @($processing)) -join "`n"
+            $report | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+            $escaped = $report.Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
+            Write-Output "::notice title=Resultado sintético Nuitka ${variant}::$escaped"
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: comparaofx-nuitka-candidate
+          path: |
+            ${{ runner.temp }}/codex-nuitka/onefile/ComparaOFX.exe
+            ${{ runner.temp }}/codex-nuitka/standalone/comparaArqOFX.dist/
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: comparaofx-nuitka-inventory
+          path: |
+            ${{ runner.temp }}/codex-nuitka/standalone/compilation-report.xml
+            ${{ runner.temp }}/codex-nuitka/standalone/inventory-nuitka.json
+            ${{ runner.temp }}/codex-nuitka/onefile/compilation-report.xml
+            ${{ runner.temp }}/codex-nuitka/onefile/inventory-nuitka.json
+          if-no-files-found: error
+          retention-days: 7
+  baseline_nuitka:
+    needs: tests
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 993a0cde56ff4fa6f564bcc6bd714ef4cb3743a4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Rebuild previous Nuitka onefile for same-runner comparison
+        shell: pwsh
+        run: |
+          python -m pip install -r requirements.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Dependências da baseline falharam.' }
+          python -m pip install Nuitka==2.5.9 ordered-set==4.1.0 zstandard==0.23.0
+          if ($LASTEXITCODE -ne 0) { throw 'Instalação do Nuitka falhou.' }
+          python -m nuitka --onefile --assume-yes-for-downloads "--output-dir=$env:RUNNER_TEMP/baseline" --output-filename=ComparaOFX.exe --windows-icon-from-ico=assets/comparaofx-2.0-azul.ico src/comparaArqOFX.py
+          if ($LASTEXITCODE -ne 0) { throw 'Build da baseline falhou.' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: comparaofx-nuitka-baseline-rebuilt
+          path: ${{ runner.temp }}/baseline/ComparaOFX.exe
+          if-no-files-found: error
+          retention-days: 7
+  comparison:
+    needs: [pyinstaller, nuitka, baseline_nuitka]
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: comparaofx-pyinstaller-candidate
+          path: ${{ runner.temp }}/comparison/pyinstaller
+      - uses: actions/download-artifact@v4
+        with:
+          name: comparaofx-nuitka-candidate
+          path: ${{ runner.temp }}/comparison/nuitka
+      - uses: actions/download-artifact@v4
+        with:
+          name: comparaofx-nuitka-baseline-rebuilt
+          path: ${{ runner.temp }}/comparison/baseline
+      - name: Validate and compare all candidates on the same runner
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $candidates = @(
+            @{ Label = 'Baseline Nuitka onefile recompilada 993a0cd'; Path = "$env:RUNNER_TEMP/comparison/baseline/ComparaOFX.exe" },
+            @{ Label = 'PyInstaller onefile'; Path = "$env:RUNNER_TEMP/comparison/pyinstaller/ComparaOFX.exe" },
+            @{ Label = 'Nuitka standalone'; Path = "$env:RUNNER_TEMP/comparison/nuitka/standalone/comparaArqOFX.dist/comparaArqOFX.exe" },
+            @{ Label = 'Nuitka onefile'; Path = "$env:RUNNER_TEMP/comparison/nuitka/onefile/ComparaOFX.exe" }
+          )
+          $runtime = & python --version
+          $cpu = (Get-CimInstance Win32_Processor | Select-Object -First 1).Name
+          $reportPath = Join-Path $env:RUNNER_TEMP 'comparison-results.md'
+          foreach ($candidate in $candidates) {
+            $exe = $candidate.Path
+            python scripts/smoke_exe.py $exe
+            if ($LASTEXITCODE -ne 0) { throw "Smoke falhou: $($candidate.Label)" }
+            $startup = & ./scripts/benchmark_windows.ps1 -Exe $exe -Runs 15
+            $startup | Write-Output
+            $processing = & python scripts/benchmark_exe_processing.py $exe
+            if ($LASTEXITCODE -ne 0) { throw "Processamento falhou: $($candidate.Label)" }
+            $processing | Write-Output
+            $file = Get-Item -LiteralPath $exe
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash
+            $distribution = if ($exe.Contains('.dist/')) { @(Get-ChildItem -LiteralPath $file.DirectoryName -Recurse -File) } else { @($file) }
+            $totalBytes = ($distribution | Measure-Object -Property Length -Sum).Sum
+            $sourceCommit = if ($candidate.Label -like 'Baseline*') { '993a0cde56ff4fa6f564bcc6bd714ef4cb3743a4' } else { $env:GITHUB_SHA }
+            $report = (@("candidato=$($candidate.Label); smoke=PASS; bytes=$($file.Length); MiB=$($file.Length / 1MB); SHA256=$hash; distribution_files=$($distribution.Count); distribution_bytes=$totalBytes; Python=$runtime; CPU=$cpu; commit=$sourceCommit; imagem=$env:ImageOS/$env:ImageVersion; mesmo_runner=true") + @($startup) + @($processing)) -join "`n"
+            $report | Add-Content -LiteralPath $reportPath
+            $report | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+            $escaped = $report.Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
+            Write-Output "::notice title=Comparação no mesmo runner $($candidate.Label)::$escaped"
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: comparaofx-comparison-results
+          path: ${{ runner.temp }}/comparison-results.md
+          if-no-files-found: error
+          retention-days: 7

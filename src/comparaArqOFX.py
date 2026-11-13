@@ -1,92 +1,88 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Thu Apr 13 11:47:17 2023
+"""ComparaOFX: terminal e seleção, com imports de processamento tardios."""
+import sys
+import os
+from controller.user_navigation import Cancelado, selecionar
+from controller.organization import raiz_aplicacao, instituicoes
+from controller.terminal_style import Terminal, relatorio_financeiro
 
-@author: vsil
-"""
 
-from controller.browse_folders import get_name_ofx, get_old_directory
-from controller.user_navigation import define_diretorio
-from controller.ofx_functions import carregar_ofx
-from controller.ofx_functions import pegar_dia_insterseccao
-from controller.ofx_functions import pegar_infos_transacoes
-from controller.ofx_functions import remove_transacao
-from controller.ofx_functions import remove_anteriores
-from controller.ofx_functions import salvar_ofx
-from controller.ofx_functions import salvar_ofx_geral
+def main(raiz=None, entrada=None, saida=None):
+    entrada = entrada or input
+    saida = saida or print
+    tela = Terminal(saida)
+    try:
+        raiz = raiz_aplicacao(raiz)
+        tela.texto('COMPARAOFX 2.0', 'titulo')
+        tela.texto('----------------------------', 'cabecalho')
+        from controller.safe_storage import pendencias, bloquear, recuperar_concluida
+        from controller.organization import OrganizacaoError
+        pendencias_nao_resolvidas = False
+        for banco_pendente in instituicoes(raiz):
+            if pendencias(banco_pendente):
+                try:
+                    with bloquear(banco_pendente):
+                        recuperar_concluida(banco_pendente)
+                    tela.texto('Registro concluído recuperado: ' + banco_pendente.name, 'sucesso')
+                except OrganizacaoError:
+                    pendencias_nao_resolvidas = True
+                    tela.texto('Operação pendente exige inspeção: ' + banco_pendente.name, 'aviso')
+        selecao = selecionar(raiz, entrada, saida)
+        if selecao is None:
+            return 1 if pendencias_nao_resolvidas else 0
+        banco, arquivo, anexos = selecao
+        from controller.ofx_functions import carregar_ofx
+        from controller.ofx_io import OFXEncodingAmbiguaError
+        from controller.workflow import planejar, executar
 
-from colorama import init, Style, Back, Fore
-import traceback
+        def ler(caminho):
+            try:
+                return carregar_ofx(caminho)
+            except OFXEncodingAmbiguaError:
+                tela.texto(f'Codificação ambígua em {caminho.name}: declarado Windows-1252, também válido em UTF-8.', 'aviso')
+                while True:
+                    resposta = entrada('1 - UTF-8; 2 - Windows-1252; 0 - cancelar: ').strip()
+                    if resposta == '0':
+                        raise Cancelado()
+                    if resposta in ('1','2'):
+                        return carregar_ofx(caminho, codificacao='utf-8' if resposta == '1' else 'cp1252')
+                    tela.texto('Entrada inválida.', 'aviso')
 
-init()
+        from controller.safe_storage import bloquear, exigir_sem_pendencias, recuperar_concluida
+        with bloquear(banco) as token:
+            recuperar_concluida(banco)
+            exigir_sem_pendencias(banco)
+            plano = planejar(raiz, banco, arquivo, anexos, leitor=ler)
+            rel = plano.resultado.relatorio
+            relatorio_financeiro(rel, tela)
+            for aviso in rel.divergencias_memo:
+                tela.texto(aviso, 'aviso')
+            destino = executar(plano, bloqueio=token)
+        tela.texto(f'Arquivos organizados em: {destino}', 'sucesso')
+        return 0
+    except Cancelado:
+        tela.texto('Operação cancelada.', 'aviso')
+        return 0
+    except (OSError, ValueError) as exc:
+        if os.environ.get('COMPARAOFX_DEBUG') == '1':
+            import traceback
+            traceback.print_exc()
+        tela.texto(f'Operação interrompida: {exc}', 'erro')
+        return 1
+    except Exception:
+        if os.environ.get('COMPARAOFX_DEBUG') == '1':
+            import traceback
+            traceback.print_exc()
+        tela.texto('Operação interrompida: falha ao processar o arquivo OFX.', 'erro')
+        return 1
 
-try:
-    # Pega o diretório atual
-    dir_atual = define_diretorio()  # os.getcwd()
-
-    # Identifica o arquivo ofx no diretório atual
-    ofx_atual = get_name_ofx(dir_atual, "Extrato", True)
-
-    # Vai buscar o arquivo ofx anterior imediado (da ultima data atualiazada)
-    ofx_anterior = get_old_directory(dir_atual)
-
-    # Carrega o arquivo OFX atual e ordena as transações pelo dia, crescente
-    header_atual, ofx_atual = carregar_ofx(ofx_atual)
-    ofx_atual.statements[0].transactions.sort(key=lambda x: x.dtposted)
-
-    # Carrega o arquivo OFX anterior e ordena as transações pelo dia, crescente
-    header_anterior, ofx_anterior = carregar_ofx(ofx_anterior)
-    ofx_anterior.statements[0].transactions.sort(key=lambda x: x.dtposted)
-
-    # Pegar o dia na ultima transação do ofx anterior
-    ultimo_dia_ofx_anterior = ofx_anterior.statements[0].transactions[-1]
-    ultimo_dia_ofx_anterior = ultimo_dia_ofx_anterior.dtposted.strftime("%Y-%m-%d")
-
-    # Pegar o dia de intersecção entre os ofx
-    data_interseccao = pegar_dia_insterseccao(ofx_atual, ultimo_dia_ofx_anterior)
-
-    # Removar transações anteriores ao da data de intersecção
-    ofx_atual = remove_anteriores(ofx_atual, data_interseccao)
-
-    # Pegar transações do ofx atual que pertencem a data de intersecção
-    inf_transacoes_atual = pegar_infos_transacoes(ofx_atual, data_interseccao)
-
-    # Pegar transações do ofx anterior que pertencem a data de intersecção
-    inf_transacoes_anterior = pegar_infos_transacoes(ofx_anterior, data_interseccao)
-
-    # Quantidade de transações a mais
-    diferenca_transacoes = len(inf_transacoes_atual) - len(inf_transacoes_anterior)
-
-    print(f"Quantidade da transações ofx anterior (a ser removida): {len(inf_transacoes_anterior)}")
-    print(f"Quantidade da transações ofx atual: {len(inf_transacoes_atual)}\n")
-    print(f"Diferença no total de transações (a ficar): {diferenca_transacoes}\n")
-
-    # Passar por todas as transações do ofx anterior na data de intersecção
-    transacoes_removidas = 0
-    for transacao_anterior, _ in inf_transacoes_anterior:
-
-        for transacao_nova, identificador in inf_transacoes_atual:
-            if (transacao_anterior == transacao_nova):
-                # Remove transacao da array auxiliar
-                inf_transacoes_atual.remove([transacao_nova, identificador])
-
-                # Remove transacao do ofx
-                ofx_atual = remove_transacao(ofx_atual, identificador)
-                transacoes_removidas += 1
-                break
-
-    if (transacoes_removidas == len(inf_transacoes_anterior)):
-        print(Back.GREEN + f"Transações removidas do ofx atual: {transacoes_removidas}\n" + Style.RESET_ALL)
-    else:
-        print(Back.RED + f"Atenção\nTransações removidas do ofx atual: {transacoes_removidas}\n" + Style.RESET_ALL)
-
-    arq_ofx_criado = salvar_ofx(ofx_atual, header_atual, dir_atual)
-    salvar_ofx_geral(ofx_atual, header_atual, dir_atual)
-
-    input(Fore.GREEN + "\nPressione enter para sair." + Style.RESET_ALL)
-
-except Exception as err:
-    print('\n')
-    tb_str = traceback.format_exc()
-    print(tb_str)
-    input(Fore.RED + "\nPressione enter para sair." + Style.RESET_ALL)
+if __name__ == '__main__':
+    resultado = main()
+    # Em console interativo a janela aberta por duplo clique deve permanecer
+    # visível; pipes e testes automatizados nunca ficam aguardando esta pausa.
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        try:
+            input('Pressione Enter para sair.')
+        except (EOFError, KeyboardInterrupt):
+            pass
+    sys.exit(resultado)
