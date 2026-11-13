@@ -28,5 +28,9 @@ class BuildAudit(unittest.TestCase):
             with patch.object(sys,'argv',['audit','nuitka',str(path),str(out)]), contextlib.redirect_stdout(io.StringIO()):
                 with self.assertRaises(SystemExit): audit.main()
             self.assertIn('tests/test_baseline.py',out.read_text())
+            path.write_text('<nuitka-compilation-report completion="yes"><module name="controller.workflow"/><module name="ofxtools.Parser"/><data_file name="renamed.bin" source="${cwd}/tests/fixtures/sample.ofx"/></nuitka-compilation-report>')
+            with patch.object(sys,'argv',['audit','nuitka',str(path),str(out)]), contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaises(SystemExit): audit.main()
+            self.assertIn('tests/fixtures/sample.ofx',out.read_text())
             path.write_text('<nuitka-compilation-report completion="error"/>')
             with self.assertRaises(ValueError): audit.inventory_nuitka(path)

@@ -43,7 +43,14 @@ def inventory_nuitka(path):
     modules = sorted(node.get('name') for node in root.findall('module') if node.get('name'))
     files = sorted(node.get('name') for tag in ('data_file', 'data_blob')
                    for node in root.findall(tag) if node.get('name'))
-    return {'format': 'nuitka', 'modules': modules, 'data_files': files}
+    origins = [node.get(attr, '') for tag, attr in (('module', 'source_path'), ('data_file', 'source'))
+               for node in root.findall(tag)]
+    prefixes = ('${cwd}/tests/', '${cwd}/scripts/',
+                (REPO / 'tests').as_posix() + '/', (REPO / 'scripts').as_posix() + '/')
+    project_sources = sorted(path for path in origins
+                             if any(path.replace('\\', '/').casefold().startswith(prefix.casefold()) for prefix in prefixes))
+    return {'format': 'nuitka', 'modules': modules, 'data_files': files,
+            'project_test_or_tool_sources': project_sources}
 
 
 def main():
@@ -56,7 +63,7 @@ def main():
     names = result['modules'] + result.get('archive_entries', []) + result.get('base_library', []) + result.get('data_files', [])
     if not any(name.startswith('controller.') for name in result['modules']) or not any(name.startswith('ofxtools') for name in result['modules']):
         raise ValueError('Inventory did not contain expected application and OFX modules')
-    bad = sorted(set(name for name in names if forbidden(name)))
+    bad = sorted(set(name for name in names if forbidden(name)) | set(result.get('project_test_or_tool_sources', [])))
     result['project_test_or_tool_entries'] = bad
     result['notable_modules'] = sorted(name for name in result['modules'] if name.split('.')[0] in ('unittest', 'pytest', 'PIL', 'pefile', 'ofxtools', 'controller'))
     serialized = (json.dumps(result, ensure_ascii=False, indent=2) + '\n').encode('utf-8')
