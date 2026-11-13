@@ -56,7 +56,11 @@ jobs:
           $processing | Write-Output
           $file = Get-Item -LiteralPath $exe
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash
-          $report = (@("candidato=PyInstaller onefile; smoke=PASS; bytes=$($file.Length); MiB=$($file.Length / 1MB); SHA256=$hash; commit=$env:GITHUB_SHA; imagem=$env:ImageOS/$env:ImageVersion") + @($startup) + @($processing)) -join "`n"
+          $distribution = if ($exe.Contains('.dist/')) { @(Get-ChildItem -LiteralPath $file.DirectoryName -Recurse -File) } else { @($file) }
+          $totalBytes = ($distribution | Measure-Object -Property Length -Sum).Sum
+          $runtime = & python --version
+          $cpu = (Get-CimInstance Win32_Processor | Select-Object -First 1).Name
+          $report = (@("candidato=PyInstaller onefile; smoke=PASS; bytes=$($file.Length); MiB=$($file.Length / 1MB); SHA256=$hash; distribution_files=$($distribution.Count); distribution_bytes=$totalBytes; Python=$runtime; CPU=$cpu; commit=$env:GITHUB_SHA; imagem=$env:ImageOS/$env:ImageVersion") + @($startup) + @($processing)) -join "`n"
           $report | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
           $escaped = $report.Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
           Write-Output "::notice title=Resultado sintético PyInstaller::$escaped"
@@ -103,7 +107,11 @@ jobs:
             $processing | Write-Output
             $file = Get-Item -LiteralPath $exe
             $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash
-            $report = (@("candidato=Nuitka $variant; smoke=PASS; bytes=$($file.Length); MiB=$($file.Length / 1MB); SHA256=$hash; commit=$env:GITHUB_SHA; imagem=$env:ImageOS/$env:ImageVersion") + @($startup) + @($processing)) -join "`n"
+            $distribution = if ($exe.Contains('.dist/')) { @(Get-ChildItem -LiteralPath $file.DirectoryName -Recurse -File) } else { @($file) }
+            $totalBytes = ($distribution | Measure-Object -Property Length -Sum).Sum
+            $runtime = & python --version
+            $cpu = (Get-CimInstance Win32_Processor | Select-Object -First 1).Name
+            $report = (@("candidato=Nuitka $variant; smoke=PASS; bytes=$($file.Length); MiB=$($file.Length / 1MB); SHA256=$hash; distribution_files=$($distribution.Count); distribution_bytes=$totalBytes; Python=$runtime; CPU=$cpu; commit=$env:GITHUB_SHA; imagem=$env:ImageOS/$env:ImageVersion") + @($startup) + @($processing)) -join "`n"
             $report | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
             $escaped = $report.Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
             Write-Output "::notice title=Resultado sintético Nuitka ${variant}::$escaped"

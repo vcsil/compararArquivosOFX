@@ -41,6 +41,33 @@ def main():
                 raise AssertionError('Movimentação sintética não foi preservada')
         if list(base.glob('Banco*')) or list(base.glob('OFXGeral*')):
             raise AssertionError('Histórico foi gravado no diretório de trabalho incorreto')
+        # Reimport an overlapping statement: only the new FITID may be added.
+        next_raw = fixture([('20261110120000', '20', 'SYNTH-1', 'Sintetico'),
+                            ('20261110120000', '30', 'SYNTH-2', 'Novo')])
+        source.write_bytes(next_raw)
+        proc = subprocess.run([str(candidate)], cwd=base, input=b'1\n',
+                              capture_output=True, timeout=120)
+        if proc.returncode != 0:
+            raise RuntimeError(f'Reimportação falhou: {proc.stderr.decode(errors="backslashreplace")}')
+        archives = list(bank.rglob('Entrada.ofx'))
+        if source.exists() or len(archives) != 2 or sorted(p.read_bytes() for p in archives) != sorted([raw, next_raw]):
+            raise AssertionError('Reimportação não preservou os dois originais')
+        clean_ids = [tuple(t.fitid for t in carregar_ofx(p)[1].statements[0].transactions)
+                     for p in bank.rglob('OFX Limpo.ofx')]
+        if sorted(clean_ids) != [('SYNTH-1',), ('SYNTH-2',)]:
+            raise AssertionError('Deduplicação do candidato não preservou somente novidades')
+        if [t.fitid for t in carregar_ofx(general[0])[1].statements[0].transactions] != ['SYNTH-1', 'SYNTH-2']:
+            raise AssertionError('Geral duplicado ou incompleto após reimportação')
+        # A changed amount under an existing FITID must block and preserve data.
+        before = general[0].read_bytes()
+        conflict = fixture([('20261110120000', '999', 'SYNTH-1', 'Sintetico')])
+        source.write_bytes(conflict)
+        proc = subprocess.run([str(candidate)], cwd=base, input=b'1\n',
+                              capture_output=True, timeout=120)
+        if proc.returncode == 0 or not source.exists() or source.read_bytes() != conflict:
+            raise AssertionError('Conflito de FITID não bloqueou preservando o original')
+        if general[0].read_bytes() != before or len(list(bank.rglob('Entrada.ofx'))) != 2:
+            raise AssertionError('Conflito alterou o histórico ou arquivou a entrada')
         print('Smoke sintético aprovado:', exe.name)
 
 

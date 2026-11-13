@@ -92,3 +92,9 @@ A documentação oficial incluída no pacote Nuitka 2.5.9 (`README.rst`, seçõe
 Os benchmarks também copiam a distribuição completa quando o candidato está em `.dist`, preservando bibliotecas auxiliares. O workflow mede standalone e onefile separadamente e disponibiliza ambos como artefatos de teste, sem release. O conjunto local passou com 126 testes, quatro ignorados por plataforma e sete falhas esperadas.
 
 Validação adicional: YAML carregado e todos os scripts/blocos PowerShell analisados pelo parser real PowerShell 7.4.6 em Linux, obtido da distribuição oficial com SHA-256 verificado. Essa análise verifica sintaxe, não substitui a execução nativa Windows.
+
+### Smoke financeiro dos candidatos
+
+O smoke foi ampliado para reimportar extrato sobreposto: o segundo Limpo deve conter apenas o novo FITID, o Geral deve conter dois FITIDs sem duplicação e os dois originais devem permanecer byte a byte idênticos. Em seguida, um valor conflitante sob FITID existente deve falhar, preservar a entrada e manter o Geral byte a byte inalterado. São dados exclusivamente sintéticos. O teste passou com o lançador Python local; a validação congelada é feita no workflow.
+
+A execução `43404969285` confirmou compilação, smoke e benchmarks PyInstaller; Nuitka standalone compilou, mas falhou na verificação da pasta do executável. Isso confirma o problema de raiz tratado em `c2c981e`. A execução `43405255669`, de `64b92e8`, também aprovou PyInstaller, registrando 9.828.612 bytes (9,3733 MiB), SHA-256 `a968536d4a5804d9d6efb2d341301e668381ef562b669e7da1898b7992235917`. Sua anotação de tempos mostrou `System.Object[]`; a montagem da lista foi corrigida na revisão seguinte. Não interpretar o hash do ZIP do artefato como hash do executável.
