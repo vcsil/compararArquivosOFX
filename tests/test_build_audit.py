@@ -34,3 +34,15 @@ class BuildAudit(unittest.TestCase):
             self.assertIn('tests/fixtures/sample.ofx',out.read_text())
             path.write_text('<nuitka-compilation-report completion="error"/>')
             with self.assertRaises(ValueError): audit.inventory_nuitka(path)
+
+    def test_distribuicao_fisica_e_zip_sao_inspecionados(self):
+        import zipfile
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); dist=root/'dist'; dist.mkdir()
+            report=root/'report.xml'; out=root/'inventory.json'
+            report.write_text('<nuitka-compilation-report completion="yes"><module name="controller.workflow"/><module name="ofxtools.Parser"/></nuitka-compilation-report>')
+            with zipfile.ZipFile(dist/'resources.zip','w') as archive:
+                archive.writestr('tests/test_baseline.py','')
+            with patch.object(sys,'argv',['audit','nuitka',str(report),str(out),'--distribution',str(dist)]), contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaises(SystemExit): audit.main()
+            self.assertIn('tests/test_baseline.py',out.read_text())

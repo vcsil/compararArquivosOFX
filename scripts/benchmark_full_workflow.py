@@ -52,10 +52,10 @@ def one(n, memory=False):
         return values
 
 
-def recovery():
+def recovery(n):
     with tempfile.TemporaryDirectory() as tmp:
         root=Path(tmp); bank=root/'Banco';bank.mkdir();source=root/'Entrada.ofx'
-        source.write_bytes(fixture([('20261110120000','10','1','Sintetico')]))
+        source.write_bytes(fixture([('20261110120000','10',str(i),'Sintetico') for i in range(n)]))
         plan=workflow.planejar(root,bank,source,hoje=date(2026,11,13));old=safe_storage.publicar_arquivo
         def interrupt(*args): old(*args); raise OSError('interrupcao sintetica')
         try:
@@ -69,15 +69,17 @@ def recovery():
 
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--repeticoes',type=int,default=2);p.add_argument('--tamanhos',type=int,nargs='+',default=[100,1000,10000]);p.add_argument('--memoria',action='store_true');a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('--repeticoes',type=int,default=2);p.add_argument('--tamanhos',type=int,nargs='+',default=[100,1000,10000]);p.add_argument('--memoria',action='store_true');p.add_argument('--somente-recuperacao',action='store_true');a=p.parse_args()
     if a.repeticoes<2: p.error('São necessárias pelo menos duas repetições')
     print(json.dumps({'python':sys.version.split()[0],'platform':platform.platform(),'repeticoes':a.repeticoes,'memory':'tracemalloc: apenas alocações Python, uma execução separada' if a.memoria else 'não medida'}),flush=True)
     for n in a.tamanhos:
+        if a.somente_recuperacao:
+            times=[recovery(n) for _ in range(a.repeticoes)]
+            print(json.dumps({'transacoes':n,'recuperacao_n':len(times),'mediana_s':statistics.median(times)}),flush=True)
+            continue
         runs=[one(n) for _ in range(a.repeticoes)]
         result={k:statistics.median(x[k] for x in runs) for k in runs[0] if k!='pico_bytes'}
         if a.memoria: result['pico_bytes']=one(n,True)['pico_bytes']
         result['transacoes']=n;print(json.dumps(result),flush=True)
-    times=[recovery() for _ in range(a.repeticoes)]
-    print(json.dumps({'recuperacao_n':len(times),'mediana_s':statistics.median(times)}),flush=True)
 
 if __name__=='__main__': main()

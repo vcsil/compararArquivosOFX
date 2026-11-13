@@ -56,6 +56,29 @@ def verify_independence(candidate, original):
     if _assinatura(original)!=before: raise AssertionError('Modelo original alterado')
 
 
+def compare_history_and_empty():
+    rows=[('20261110120000[-3:EST]','10','1','Antigo'),
+          ('20261110130000[-3:EST]','20','2','Novo')]
+    with tempfile.TemporaryDirectory() as tmp:
+        previous=Path(tmp)/'anterior.ofx'; current=Path(tmp)/'atual.ofx'
+        previous.write_bytes(fixture(rows[:1])); current.write_bytes(fixture(rows))
+        old=carregar_ofx(previous)[1]; model=carregar_ofx(current)[1]
+        old_signature=_assinatura(old); original_signature=_assinatura(model)
+        result=analisar(model,old)
+        assert result.relatorio.estado=='APROVADO'
+        baseline=result.modelo_filtrado(model); candidate=clone_experimental(model,result.indices_novos)
+        assert serializar_ofx(candidate)==serializar_ofx(baseline)
+        assert _assinatura(candidate)==_assinatura(baseline)
+        verify_independence(candidate,model)
+        assert _assinatura(old)==old_signature and _assinatura(model)==original_signature
+        empty_result=analisar(old,old)
+        assert empty_result.relatorio.estado=='SEM_NOVIDADES'
+        empty=clone_experimental(old,empty_result.indices_novos)
+        assert serializar_ofx(empty)==serializar_ofx(empty_result.modelo_filtrado(old))
+        assert not empty.statements[0].transactions and _assinatura(old)==old_signature
+        print('Equivalência sintética: histórico, saída vazia, conta, período, saldos, fuso e transações.',flush=True)
+
+
 def timezone_counterexample():
     class MutableTZ(tzinfo):
         def __init__(self): self.offset=timedelta(hours=-3)
@@ -84,6 +107,7 @@ def main():
     if args.repeticoes<2 or any(n<2 for n in args.tamanhos): parser.error('Use ao menos duas repetições e duas transações.')
     print('Python',sys.version.split()[0],flush=True)
     timezone_counterexample()
+    compare_history_and_empty()
     for n in args.tamanhos:
         with tempfile.TemporaryDirectory() as tmp:
             source=Path(tmp)/'sintetico.ofx'

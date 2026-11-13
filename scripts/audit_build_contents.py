@@ -58,9 +58,22 @@ def main():
     parser.add_argument('format', choices=['pyinstaller', 'nuitka'])
     parser.add_argument('input', type=Path)
     parser.add_argument('output', type=Path)
+    parser.add_argument('--distribution', type=Path)
     args = parser.parse_args()
     result = inventory_pyinstaller(args.input) if args.format == 'pyinstaller' else inventory_nuitka(args.input)
     names = result['modules'] + result.get('archive_entries', []) + result.get('base_library', []) + result.get('data_files', [])
+    if args.distribution:
+        if not args.distribution.is_dir():
+            raise ValueError('Distribution directory does not exist')
+        files = sorted(p for p in args.distribution.rglob('*') if p.is_file())
+        result['distribution_entries'] = [p.relative_to(args.distribution).as_posix() for p in files]
+        result['distribution_archives'] = {}
+        for path in files:
+            if path.suffix.lower() == '.zip' and zipfile.is_zipfile(path):
+                with zipfile.ZipFile(path) as archive:
+                    result['distribution_archives'][path.relative_to(args.distribution).as_posix()] = sorted(archive.namelist())
+        names += result['distribution_entries']
+        names += [name for entries in result['distribution_archives'].values() for name in entries]
     if not any(name.startswith('controller.') for name in result['modules']) or not any(name.startswith('ofxtools') for name in result['modules']):
         raise ValueError('Inventory did not contain expected application and OFX modules')
     bad = sorted(set(name for name in names if forbidden(name)) | set(result.get('project_test_or_tool_sources', [])))
