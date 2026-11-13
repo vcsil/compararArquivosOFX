@@ -46,9 +46,20 @@ jobs:
       - name: Benchmark PyInstaller onefile
         shell: pwsh
         run: |
-          ./scripts/benchmark_windows.ps1 -Exe "$env:RUNNER_TEMP/codex-pyinstaller/ComparaOFX.exe" -Runs 15
+          $exe = "$env:RUNNER_TEMP/codex-pyinstaller/ComparaOFX.exe"
+          $startup = & ./scripts/benchmark_windows.ps1 -Exe $exe -Runs 15
+          $startup | Write-Output
           python -m pip install -r requirements.txt
-          python scripts/benchmark_exe_processing.py "$env:RUNNER_TEMP/codex-pyinstaller/ComparaOFX.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'Instalação do benchmark falhou.' }
+          $processing = & python scripts/benchmark_exe_processing.py $exe
+          if ($LASTEXITCODE -ne 0) { throw 'Benchmark de processamento falhou.' }
+          $processing | Write-Output
+          $file = Get-Item -LiteralPath $exe
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash
+          $report = @("candidato=PyInstaller onefile; smoke=PASS; bytes=$($file.Length); MiB=$($file.Length / 1MB); SHA256=$hash; commit=$env:GITHUB_SHA; imagem=$env:ImageOS/$env:ImageVersion", $startup, $processing) -join "`n"
+          $report | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+          $escaped = $report.Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
+          Write-Output "::notice title=Resultado sintético PyInstaller::$escaped"
       - uses: actions/upload-artifact@v4
         with:
           name: comparaofx-pyinstaller-candidate
@@ -80,9 +91,20 @@ jobs:
       - name: Benchmark Nuitka onefile
         shell: pwsh
         run: |
-          ./scripts/benchmark_windows.ps1 -Exe "$env:RUNNER_TEMP/codex-nuitka/onefile/ComparaOFX.exe" -Runs 15
+          $exe = "$env:RUNNER_TEMP/codex-nuitka/onefile/ComparaOFX.exe"
+          $startup = & ./scripts/benchmark_windows.ps1 -Exe $exe -Runs 15
+          $startup | Write-Output
           python -m pip install -r requirements.txt
-          python scripts/benchmark_exe_processing.py "$env:RUNNER_TEMP/codex-nuitka/onefile/ComparaOFX.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'Instalação do benchmark falhou.' }
+          $processing = & python scripts/benchmark_exe_processing.py $exe
+          if ($LASTEXITCODE -ne 0) { throw 'Benchmark de processamento falhou.' }
+          $processing | Write-Output
+          $file = Get-Item -LiteralPath $exe
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash
+          $report = @("candidato=Nuitka onefile; smoke=PASS; bytes=$($file.Length); MiB=$($file.Length / 1MB); SHA256=$hash; commit=$env:GITHUB_SHA; imagem=$env:ImageOS/$env:ImageVersion", $startup, $processing) -join "`n"
+          $report | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+          $escaped = $report.Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
+          Write-Output "::notice title=Resultado sintético Nuitka::$escaped"
       - uses: actions/upload-artifact@v4
         with:
           name: comparaofx-nuitka-candidate
