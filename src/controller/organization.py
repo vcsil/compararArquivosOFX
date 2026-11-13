@@ -17,11 +17,11 @@ class OrganizacaoError(ValueError):
 def raiz_aplicacao(raiz=None):
     if raiz is not None:
         return Path(raiz).resolve(strict=True)
-    # Nuitka does not set sys.frozen. containing_dir points beside the
-    # original binary in both standalone and onefile mode, outside extraction.
-    compiled = globals().get('__compiled__')
-    if compiled is not None:
-        return Path(compiled.containing_dir).resolve(strict=True)
+    # Nuitka normalizes argv[0] to the original executable in both modes.
+    # containing_dir points ABOVE .dist in standalone; __file__ and
+    # sys.executable can point inside the extraction directory in onefile.
+    if '__compiled__' in globals():
+        return Path(sys.argv[0]).resolve(strict=True).parent
     if getattr(sys, 'frozen', False):
         return Path(sys.executable).resolve(strict=True).parent
     return Path(__file__).resolve().parents[2]

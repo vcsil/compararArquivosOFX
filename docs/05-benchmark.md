@@ -2,7 +2,7 @@
 
 ## Status de Windows
 
-Não existe runner Windows local nesta sessão. O workflow `windows-validation.yml` prepara testes e candidatos, mas nenhuma execução nativa foi confirmada até a criação deste relatório. Tempos de arranque Windows, tamanho/hash de executáveis, uso por duplo clique, compatibilidade com `msvcrt`, PyInstaller, Nuitka e cache persistente estão pendentes. Nenhum empacotador foi escolhido. Resultados Linux não são tempos do executável Windows.
+O workspace local é Linux; a retomada usa runners Windows nativos do GitHub Actions. Resultados Windows observados, hashes e comparação são registrados ao final deste documento. As medições Linux históricas abaixo permanecem como referência do motor Python e não representam desempenho dos executáveis Windows. Validação manual por duplo clique e em uma máquina limpa sem Python permanece separada da automação.
 
 ## Perfil Linux sintético
 
@@ -67,7 +67,7 @@ Na Etapa 4, nas mesmas categorias de primeira importação e em outra execução
 
 A Etapa 4 documenta separadamente hashes, sincronização e publicação. Não há medições de inicialização do empacotador, de candidatos Windows, de processamento Windows em duplicatas ou de cache; elas não foram estimadas. `scripts/benchmark_windows.ps1` fornece a coleta do menu para candidatos onefile depois de construídos. A primeira amostra não garante cache frio. Medidas detalhadas restantes e comparação de empacotadores dependem da validação nativa.
 
-Após a publicação da branch, a consulta ao histórico de execuções do GitHub Actions retornou `Forbidden` nesta sessão. Portanto não há identificador de execução, logs ou medições de runner para registrar aqui.
+Na sessão anterior, a consulta ao histórico via API retornou `Forbidden`. A retomada mantém essa limitação da API, mas consulta páginas e anotações públicas autorizadas para registrar os resultados nativos abaixo.
 
 ## Revisão 5.1
 
@@ -98,3 +98,7 @@ Validação adicional: YAML carregado e todos os scripts/blocos PowerShell anali
 O smoke foi ampliado para reimportar extrato sobreposto: o segundo Limpo deve conter apenas o novo FITID, o Geral deve conter dois FITIDs sem duplicação e os dois originais devem permanecer byte a byte idênticos. Em seguida, um valor conflitante sob FITID existente deve falhar, preservar a entrada e manter o Geral byte a byte inalterado. São dados exclusivamente sintéticos. O teste passou com o lançador Python local; a validação congelada é feita no workflow.
 
 A execução `43404969285` confirmou compilação, smoke e benchmarks PyInstaller; Nuitka standalone compilou, mas falhou na verificação da pasta do executável. Isso confirma o problema de raiz tratado em `c2c981e`. A execução `43405255669`, de `64b92e8`, também aprovou PyInstaller, registrando 9.828.612 bytes (9,3733 MiB), SHA-256 `a968536d4a5804d9d6efb2d341301e668381ef562b669e7da1898b7992235917`. Sua anotação de tempos mostrou `System.Object[]`; a montagem da lista foi corrigida na revisão seguinte. Não interpretar o hash do ZIP do artefato como hash do executável.
+
+### Ajuste da raiz standalone após evidência nativa
+
+A execução [43405640308](https://github.com/vcsil/compararArquivosOFX/actions/runs/43405640308), commit `c2c981e`, ainda falhou no smoke standalone após compilar. A primeira interpretação de `containing_dir` estava incompleta: no código oficial de Nuitka 2.5.9, `CodeTemplatesConstants.py` aplica `STRIP_DIRNAME` no modo standalone, apontando para o pai de `.dist`. Portanto não atende ao requisito específico de procurar bancos dentro da pasta do executável standalone. A correção final detecta `__compiled__` e usa `Path(sys.argv[0]).resolve(strict=True).parent`. `MainProgram.c` normaliza `argv[0]` para o caminho absoluto do binário original, inclusive no onefile, como documentado no README da versão. O teste agora simula explicitamente `containing_dir` acima de `.dist` e a extração fora da raiz.

@@ -75,11 +75,18 @@ class Caminhos(unittest.TestCase):
         cwd = Path.cwd()
         try:
             os.chdir(self.root.parent)
-            with patch.dict(organization.__dict__, {'__compiled__': SimpleNamespace(containing_dir=str(self.root))}), \
-                 patch.object(sys, 'executable', str(extracted / 'interno.exe')), \
-                 patch.object(organization, '__file__', str(extracted / 'controller' / 'organization.py')):
-                self.assertTrue(raiz_aplicacao().samefile(self.root))
-                self.assertTrue(raiz_aplicacao(extracted).samefile(extracted))
+            for mode in ('standalone', 'onefile'):
+                with self.subTest(mode=mode):
+                    binary_root = self.root / (mode + '.dist' if mode == 'standalone' else mode)
+                    binary_root.mkdir()
+                    exe = binary_root / 'Programa com acento.exe'; exe.write_bytes(b'sintetico')
+                    metadata = SimpleNamespace(containing_dir=str(binary_root.parent if mode == 'standalone' else binary_root))
+                    with patch.dict(organization.__dict__, {'__compiled__': metadata}), \
+                         patch.object(sys, 'argv', [str(exe)]), \
+                         patch.object(sys, 'executable', str(extracted / 'interno.exe')), \
+                         patch.object(organization, '__file__', str(extracted / 'controller' / 'organization.py')):
+                        self.assertTrue(raiz_aplicacao().samefile(binary_root))
+                        self.assertTrue(raiz_aplicacao(extracted).samefile(extracted))
         finally:
             os.chdir(cwd)
 
