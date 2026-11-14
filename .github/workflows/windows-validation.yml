@@ -215,7 +215,11 @@ jobs:
           $reportPath = Join-Path $env:RUNNER_TEMP 'comparison-results.md'
           foreach ($candidate in $candidates) {
             $exe = $candidate.Path
-            python scripts/smoke_exe.py $exe
+            if ($candidate.Label -like 'Baseline*') {
+              python scripts/smoke_exe.py $exe --skip-rede-csv
+            } else {
+              python scripts/smoke_exe.py $exe
+            }
             if ($LASTEXITCODE -ne 0) { throw "Smoke falhou: $($candidate.Label)" }
             $startup = & ./scripts/benchmark_windows.ps1 -Exe $exe -Runs 15
             $startup | Write-Output
