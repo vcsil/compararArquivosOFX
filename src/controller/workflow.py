@@ -8,7 +8,7 @@ import shutil
 from . import safe_storage
 from .ofx_names import validar_nome_limpo
 
-from .organization import ANEXOS, OrganizacaoError, caminho_direto, link_inseguro, pasta_dia, proxima_importacao, localizar_historico
+from .organization import ANEXOS, OrganizacaoError, caminho_direto, link_inseguro, pasta_dia, proxima_importacao, localizar_historico, extrato_permitido
 
 @dataclass
 class Plano:
@@ -71,13 +71,17 @@ def planejar(raiz, banco, original, anexos=(), hoje=None, leitor=None, relogio=N
     names = [p.name.casefold() for p in arquivos] + [limpo_nome.casefold()]
     if len(set(names)) != len(names):
         raise OrganizacaoError('Colisão entre nomes de arquivos de destino')
-    if original.suffix.casefold() != '.ofx' or any(p.suffix.casefold() not in ANEXOS for p in anexos):
+    if not extrato_permitido(banco, original) or any(p.suffix.casefold() not in ANEXOS for p in anexos):
         raise OrganizacaoError('Tipo de extrato ou anexo não permitido')
     if any(p.stat().st_nlink > 1 for p in arquivos):
         raise OrganizacaoError('Arquivos com múltiplos links físicos não são suportados')
     hashes = {p: _hash(p) for p in arquivos}
     leitor = leitor or carregar_ofx
-    _, atual = leitor(original)
+    if original.suffix.casefold() == '.csv':
+        from .rede_csv import carregar_csv_rede
+        _, atual = carregar_csv_rede(original)
+    else:
+        _, atual = leitor(original)
     historico = localizar_historico(banco, hoje)
     if historico and historico.stat().st_nlink > 1:
         raise OrganizacaoError('Histórico com múltiplos links físicos não é suportado')
