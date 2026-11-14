@@ -71,6 +71,22 @@ def extratos(raiz):
                    and not p.name.startswith(('~', '.'))), key=lambda p: (p.name.casefold(), p.name))
 
 
+def csvs_rede(raiz):
+    """Relatórios CSV elegíveis somente para a instituição 'Rede'."""
+    if not any(p.name.casefold() == 'rede' for p in instituicoes(raiz)):
+        return []
+    return sorted((p for p in raiz.iterdir()
+                   if _regular(p) and p.suffix.casefold() == '.csv'
+                   and not p.name.startswith(('~', '.'))),
+                  key=lambda p: (p.name.casefold(), p.name))
+
+
+def extrato_permitido(banco, arquivo):
+    """Não autorizar CSV como extrato de outras instituições."""
+    extensao = Path(arquivo).suffix.casefold()
+    return extensao == '.ofx' or (extensao == '.csv' and Path(banco).name.casefold() == 'rede')
+
+
 def anexos(raiz):
     return sorted((p for p in raiz.iterdir() if _regular(p) and p.suffix.casefold() in ANEXOS
                    and not p.name.startswith(('~', '.'))), key=lambda p: (p.name.casefold(), p.name))
