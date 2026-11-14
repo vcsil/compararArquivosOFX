@@ -135,7 +135,6 @@ def main():
                 raise AssertionError('Recuperação alterou nomes, dados ou originais')
             print(f'Recuperação sintética v{version} aprovada:', exe.name)
         # CSV da Rede: nenhum Python externo, CSV original preservado e OFX validado.
-        from controller.ofx_names import eh_nome_limpo
         rede = root / 'Rede'
         rede.mkdir()
         csv_data = (
@@ -146,7 +145,7 @@ def main():
             'M001;Maquininha;Visa;Crédito;À vista;1;Não\\n'
             'Negada;10/11/2026;12:31:05;10,50;REDE-IGNORE;'
             'M001;Maquininha;Visa;Crédito;À vista;1;Não\\n'
-        ).replace('\\n', '\\n').encode('utf-8')
+        ).encode('utf-8')
         csv_source = root / 'vendas_rede.csv'
         csv_source.write_bytes(csv_data)
         # O arquivo de entrada é único; selecionar a instituição Rede.
