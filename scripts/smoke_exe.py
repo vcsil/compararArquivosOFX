@@ -150,7 +150,7 @@ def main():
             csv_source = root / 'vendas_rede.csv'
             csv_source.write_bytes(csv_data)
             # O arquivo de entrada é único; selecionar a instituição Rede.
-            proc = subprocess.run([str(candidate)], cwd=base, input=b'2\\n',
+            proc = subprocess.run([str(candidate)], cwd=base, input=b'1\\n',
                                   capture_output=True, timeout=120, env=candidate_env)
             if proc.returncode:
                 raise AssertionError('Candidato falhou ao importar CSV da Rede: ' +
