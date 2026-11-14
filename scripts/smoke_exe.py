@@ -134,6 +134,38 @@ def main():
                     or (plan.importacao/source.name).read_bytes() != recovery_raw):
                 raise AssertionError('Recuperação alterou nomes, dados ou originais')
             print(f'Recuperação sintética v{version} aprovada:', exe.name)
+        # CSV da Rede: nenhum Python externo, CSV original preservado e OFX validado.
+        from controller.ofx_names import eh_nome_limpo
+        rede = root / 'Rede'
+        rede.mkdir()
+        csv_data = (
+            'Status da venda;Data da venda;Hora da venda;Valor líquido;NSU/CV;'
+            'Código da maquininha;Meio de pagamento;Bandeira;Modalidade;'
+            'Tipo;Número de parcelas;Pré-autorizado\\n'
+            'Aprovada;10/11/2026;12:30:05;10,50;REDE-SMOKE;'
+            'M001;Maquininha;Visa;Crédito;À vista;1;Não\\n'
+            'Negada;10/11/2026;12:31:05;10,50;REDE-IGNORE;'
+            'M001;Maquininha;Visa;Crédito;À vista;1;Não\\n'
+        ).replace('\\n', '\\n').encode('utf-8')
+        csv_source = root / 'vendas_rede.csv'
+        csv_source.write_bytes(csv_data)
+        # O arquivo de entrada é único; selecionar a instituição Rede.
+        proc = subprocess.run([str(candidate)], cwd=base, input=b'2\\n',
+                              capture_output=True, timeout=120, env=candidate_env)
+        if proc.returncode:
+            raise AssertionError('Candidato falhou ao importar CSV da Rede: ' +
+                                 proc.stdout.decode(errors='backslashreplace'))
+        copias = list(rede.rglob('vendas_rede.csv'))
+        novos = [p for p in rede.rglob('*.ofx') if eh_nome_limpo(p.name, legado=False)]
+        gerais = list(rede.rglob('OFXGeral-*.ofx'))
+        if csv_source.exists() or len(copias) != 1 or len(novos) != 1 or len(gerais) != 1:
+            raise AssertionError('Fluxo Rede CSV não organizou os arquivos esperados')
+        if copias[0].read_bytes() != csv_data:
+            raise AssertionError('CSV original da Rede foi modificado')
+        for path in (novos[0], gerais[0]):
+            if [t.fitid for t in carregar_ofx(path)[1].statements[0].transactions] != ['REDE-SMOKE - 12:30:05']:
+                raise AssertionError('CSV Rede convertido não preservou a venda aprovada')
+        print('Smoke CSV Rede aprovado:', exe.name)
         print('Smoke sintético aprovado:', exe.name)
 
 
