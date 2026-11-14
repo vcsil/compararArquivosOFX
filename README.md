@@ -48,6 +48,12 @@ Meus Extratos/
 
 Os nomes e horários ilustram a convenção de organização, não dados bancários reais. O arquivo `OFX Limpo` contém as novas movimentações e `OFXGeral` mantém o histórico consolidado do dia. A versão 2.0 compara principalmente o `FITID` para evitar duplicações e bloqueia conflitos financeiros.
 
+## Extratos CSV da Rede
+
+A partir da integração candidata da versão 2.1, se existir uma pasta de instituição chamada exatamente **`Rede`** (independente de maiúsculas/minúsculas), o aplicativo também poderá importar os relatórios de vendas **`.csv`** da Rede. Escolha o arquivo CSV e a instituição Rede no menu; o programa fará a conversão em memória, preservará o CSV original e criará os OFX Limpo e Geral pela mesma rotina segura dos extratos OFX.
+
+**Não é um leitor CSV genérico:** o arquivo deve conter as colunas do relatório da Rede e somente vendas aprovadas são convertidas. Consulte [mapeamento, limitações e exemplos](docs/11-rede-csv.md). CSV não é aceito como extrato das outras instituições. A release `v2.0.0` não contém essa funcionalidade, que está em desenvolvimento separado.
+
 ## Observações de uso
 
 - Instituições diferentes devem ter subpastas próprias; não misture contas e históricos.

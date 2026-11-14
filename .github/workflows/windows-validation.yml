@@ -2,9 +2,9 @@ name: Windows validation and candidate builds
 on:
   workflow_dispatch:
   push:
-    branches: [master, codex/comparaofx-2.0-etapa5, codex/comparaofx-2.0-etapa6, codex/comparaofx-2.0-icone-assinatura, codex/comparaofx-2.0-otimizacao-segura, codex/comparaofx-2.0-colorama]
+    branches: [master, codex/comparaofx-2.0-etapa5, codex/comparaofx-2.0-etapa6, codex/comparaofx-2.0-icone-assinatura, codex/comparaofx-2.0-otimizacao-segura, codex/comparaofx-2.0-colorama, codex/comparaofx-2.1-rede-csv]
   pull_request:
-    branches: [master, codex/comparaofx-2.0-etapa5, codex/comparaofx-2.0-etapa6, codex/comparaofx-2.0-icone-assinatura, codex/comparaofx-2.0-otimizacao-segura, codex/comparaofx-2.0-colorama]
+    branches: [master, codex/comparaofx-2.0-etapa5, codex/comparaofx-2.0-etapa6, codex/comparaofx-2.0-icone-assinatura, codex/comparaofx-2.0-otimizacao-segura, codex/comparaofx-2.0-colorama, codex/comparaofx-2.1-rede-csv]
 permissions:
   contents: read
 jobs:
@@ -215,7 +215,11 @@ jobs:
           $reportPath = Join-Path $env:RUNNER_TEMP 'comparison-results.md'
           foreach ($candidate in $candidates) {
             $exe = $candidate.Path
-            python scripts/smoke_exe.py $exe
+            if ($candidate.Label -like 'Baseline*') {
+              python scripts/smoke_exe.py $exe --skip-rede-csv
+            } else {
+              python scripts/smoke_exe.py $exe
+            }
             if ($LASTEXITCODE -ne 0) { throw "Smoke falhou: $($candidate.Label)" }
             $startup = & ./scripts/benchmark_windows.ps1 -Exe $exe -Runs 15
             $startup | Write-Output
