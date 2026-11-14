@@ -148,7 +148,7 @@ def preparar_transacoes(linhas):
     transacoes = []
     vistos = set()
     for linha in linhas:
-        if normalizar(linha['status da venda']) not in ('aprovado', 'aprovada'):
+        if not normalizar(linha['status da venda']).startswith('aprovad'):
             continue
         n = linha['_numero_linha']
         data = _data(_obrigatorio(linha, 'data da venda'), n)
