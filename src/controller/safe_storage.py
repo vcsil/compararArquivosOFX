@@ -94,7 +94,7 @@ def exigir_sem_pendencias(banco):
 def _limpar_preparacao(banco, op, m):
     """Remove apenas preparação própria quando ainda não houve publicação."""
     import re
-    from .organization import ANEXOS, pasta_dia
+    from .organization import ANEXOS, pasta_dia, extrato_permitido
     if not re.fullmatch(r'[0-9a-f]{32}', op.name):
         raise ValueError('identificador de operação inválido')
     pasta, geral = Path(m['pasta']), Path(m['geral'])
@@ -141,7 +141,7 @@ def _limpar_preparacao(banco, op, m):
             raise ValueError('nome inválido')
         nomes.add(nome.casefold())
         hashes_esperados[nome.casefold()] = item['sha256']
-        if (i == 0 and Path(nome).suffix.casefold() != '.ofx') or (i > 0 and Path(nome).suffix.casefold() not in ANEXOS):
+        if (i == 0 and not extrato_permitido(banco, nome)) or (i > 0 and Path(nome).suffix.casefold() not in ANEXOS):
             raise ValueError('tipo inválido')
     def verificar():
         for path in (banco, banco / '.comparaofx', op, op / 'pasta', *pasta.parents):
@@ -271,7 +271,7 @@ def recuperar_concluida(banco, *, bloqueio=None):
                 raise ValueError('lista de arquivos inválida')
             origens = []
             vistos = set()
-            from .organization import ANEXOS
+            from .organization import ANEXOS, extrato_permitido
             for idx, item in enumerate(arquivos):
                 nome = item['nome']
                 if not isinstance(nome, str) or nome in ('', '.', '..') or Path(nome).name != nome or '\\' in nome:
@@ -279,7 +279,7 @@ def recuperar_concluida(banco, *, bloqueio=None):
                 if nome.casefold() in vistos or nome.casefold() == limpo_nome.casefold():
                     raise ValueError('nomes duplicados')
                 vistos.add(nome.casefold())
-                if (idx == 0 and Path(nome).suffix.casefold() != '.ofx') or (idx > 0 and Path(nome).suffix.casefold() not in ANEXOS):
+                if (idx == 0 and not extrato_permitido(banco, nome)) or (idx > 0 and Path(nome).suffix.casefold() not in ANEXOS):
                     raise ValueError('tipo de arquivo inválido')
                 origem, copia = banco.parent / nome, pasta / nome
                 if link_inseguro(origem) or link_inseguro(copia) or sha(copia) != item['sha256']:
