@@ -112,9 +112,8 @@ def planejar(raiz, banco, original, anexos=(), hoje=None, leitor=None, relogio=N
             from .rede_csv import consolidar_historicos
             modelos = []
             # localizar_historico já validou a hierarquia e recusou links.
-            for snapshot in sorted(banco.rglob('OFXGeral-*.ofx')):
-                if len(snapshot.relative_to(banco).parts) != 4:
-                    continue
+            from .organization import historicos_validos
+            for _, snapshot in historicos_validos(banco, hoje):
                 if snapshot.stat().st_nlink != 1:
                     raise OrganizacaoError('Snapshot Rede com múltiplos links')
                 digest = _hash(snapshot)
@@ -134,6 +133,10 @@ def planejar(raiz, banco, original, anexos=(), hoje=None, leitor=None, relogio=N
     dia = pasta_dia(banco, hoje)
     destino = proxima_importacao(dia)
     geral = dia / f'OFXGeral-{hoje.isoformat()}.ofx'
+    if historico and historico != geral:
+        from .organization import validar_historico_relativo
+        if validar_historico_relativo(banco, historico.relative_to(banco)) == hoje:
+            raise OrganizacaoError('Histórico legado no mesmo dia do destino: exige conciliação antes de criar outro Geral')
     if destino.exists() or link_inseguro(destino):
         raise OrganizacaoError('Pasta de importação já existe')
     if link_inseguro(geral) or (geral.exists() and historico != geral):

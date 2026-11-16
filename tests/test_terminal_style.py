@@ -79,7 +79,7 @@ class TerminalStyleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); (root/'Banco A').mkdir(); (root/'Banco B').mkdir()
             (root/'a.ofx').write_bytes(b'ofx'); (root/'anexo.pdf').write_bytes(b'pdf')
-            mensagens = []; respostas = iter(['inválido', '2'])
+            mensagens = []; respostas = iter(['inválido', '2', 't'])
             banco, arquivo, anexos = selecionar(root, lambda _: next(respostas), mensagens.append)
             self.assertEqual((banco.name, arquivo.name, len(anexos)), ('Banco B', 'a.ofx', 1))
             self.assertIn('01 - Banco A', mensagens); self.assertIn('02 - Banco B', mensagens)

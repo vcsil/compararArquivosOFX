@@ -9,7 +9,7 @@ import threading
 import uuid
 from datetime import date
 
-from .organization import OrganizacaoError, link_inseguro
+from .organization import OrganizacaoError, link_inseguro, validar_historico_relativo
 from .ofx_names import nome_limpo_manifesto
 
 
@@ -28,12 +28,47 @@ def bloqueio_valido(token, banco):
             and registro is not None and registro == (token, os.getpid(), threading.get_ident()))
 
 
+def _verificar_pasta_sincronizada(banco):
+    # Locks locais não constituem um protocolo entre dispositivos OneDrive.
+    for key in ('OneDrive', 'OneDriveConsumer', 'OneDriveCommercial'):
+        value = os.environ.get(key)
+        if value and banco.is_relative_to(Path(value).resolve()):
+            raise OrganizacaoError('Bloqueio do sistema de arquivos: pasta OneDrive identificada; trabalhe em cópia local fora da sincronização. Exclusão entre dispositivos não é garantida')
+
+
+def _verificar_volume_windows(banco):
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    volume = ctypes.create_unicode_buffer(1024)
+    getpath = kernel.GetVolumePathNameW
+    getpath.argtypes = (wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD)
+    getpath.restype = wintypes.BOOL
+    if not getpath(str(banco), volume, len(volume)):
+        raise OrganizacaoError('Bloqueio do sistema de arquivos: volume não verificável')
+    drive = kernel.GetDriveTypeW
+    drive.argtypes = (wintypes.LPCWSTR,); drive.restype = wintypes.UINT
+    fs = ctypes.create_unicode_buffer(128)
+    info = kernel.GetVolumeInformationW
+    info.argtypes = (wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD,
+                     ctypes.POINTER(wintypes.DWORD), ctypes.POINTER(wintypes.DWORD),
+                     ctypes.POINTER(wintypes.DWORD), wintypes.LPWSTR, wintypes.DWORD)
+    info.restype = wintypes.BOOL
+    if not info(volume.value, None, 0, None, None, None, fs, len(fs)):
+        raise OrganizacaoError('Bloqueio do sistema de arquivos: tipo do volume não verificável')
+    if drive(volume.value) != 3 or fs.value.upper() not in ('NTFS', 'REFS'):
+        raise OrganizacaoError('Bloqueio do sistema de arquivos: use volume local NTFS/ReFS fora de Drive virtual ou rede; exclusão entre dispositivos não homologada')
+
+
 @contextlib.contextmanager
 def bloquear(banco):
     banco = Path(banco).absolute()
     if link_inseguro(banco) or link_inseguro(banco.parent) or not banco.is_dir():
         raise OrganizacaoError('Instituição inválida para bloqueio')
     banco = banco.resolve(strict=True)
+    _verificar_pasta_sincronizada(banco)
+    if sys.platform == 'win32':
+        _verificar_volume_windows(banco)
     locks = banco.parent / '.comparaofx-locks'
     if link_inseguro(locks):
         raise OrganizacaoError('Pasta de bloqueios insegura')
@@ -46,8 +81,11 @@ def bloquear(banco):
         flags |= os.O_NOFOLLOW
     fd = os.open(lockpath, flags, 0o600)
     try:
-        if os.fstat(fd).st_nlink != 1:
-            raise OrganizacaoError('Arquivo de bloqueio com links adicionais')
+        links = os.fstat(fd).st_nlink
+        if links > 1:
+            raise OrganizacaoError('Bloqueio do sistema de arquivos: lock possui hardlinks adicionais; processamento suspenso')
+        if links != 1:
+            raise OrganizacaoError('Bloqueio do sistema de arquivos: contagem de links não verificável. Use pasta local fora do Drive; sincronização entre dispositivos não garante exclusão mútua')
         f = os.fdopen(fd, 'r+b', buffering=0)
         fd = -1
         try:
@@ -104,11 +142,7 @@ def _verificar_referencias(banco, manifesto):
         if rel.is_absolute() or rel.drive or '..' in rel.parts or '\\' in item['nome']:
             raise ValueError('Caminho de referência inválido')
         if rel != Path('.rede.json'):
-            if len(rel.parts) != 4:
-                raise ValueError('Snapshot de referência inválido')
-            dia = date.fromisoformat(rel.parent.name)
-            if pasta_dia(banco, dia).relative_to(banco) != rel.parent or rel.name != f'OFXGeral-{dia.isoformat()}.ofx':
-                raise ValueError('Hierarquia de referência inválida')
+            validar_historico_relativo(banco, rel)
         path = banco / rel
         for parent in (path, *path.parents):
             if parent == banco.parent:
@@ -144,11 +178,7 @@ def _limpar_preparacao(banco, op, m):
     historico = None
     if historico_rel is not None:
         rel = Path(historico_rel)
-        if rel.is_absolute() or rel.drive or '..' in rel.parts or len(rel.parts) != 4:
-            raise ValueError('histórico inválido')
-        hd = date.fromisoformat(rel.parent.name)
-        if pasta_dia(banco, hd).relative_to(banco) != rel.parent or rel.name != f'OFXGeral-{hd.isoformat()}.ofx':
-            raise ValueError('histórico inválido')
+        validar_historico_relativo(banco, rel)
         historico = banco / rel
         for path in (historico, *historico.parents):
             if path == banco.parent: break
@@ -283,12 +313,7 @@ def recuperar_concluida(banco, *, bloqueio=None):
             referencia = None
             if m.get('historico'):
                 historico_rel = Path(m['historico'])
-                if historico_rel.is_absolute() or historico_rel.drive or '..' in historico_rel.parts or len(historico_rel.parts) != 4:
-                    raise ValueError('caminho do histórico inválido')
-                historico_data = date.fromisoformat(historico_rel.parent.name)
-                if (pasta_dia(banco, historico_data).relative_to(banco) != historico_rel.parent
-                        or historico_rel.name != f'OFXGeral-{historico_data.isoformat()}.ofx'):
-                    raise ValueError('hierarquia do histórico inválida')
+                validar_historico_relativo(banco, historico_rel)
                 historico = banco / historico_rel
                 if historico != geral:
                     referencia = historico

@@ -59,5 +59,5 @@ class CandidateInputTests(unittest.TestCase):
              patch.object(module.subprocess, 'run', side_effect=run_app), \
              contextlib.redirect_stdout(output):
             module.main()
-        self.assertEqual(len(invocations), 8)
+        self.assertEqual(len(invocations), 9)
         self.assertIn('Smoke CSV Rede aprovado', output.getvalue())

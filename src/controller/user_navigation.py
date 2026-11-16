@@ -63,6 +63,6 @@ def selecionar(raiz, entrada=input, saida=print):
     # Outros relatórios CSV da Rede são entradas, não anexos a arquivar.
     disponiveis = [p for p in anexos(raiz) if p != arquivo and
                    (arquivo.suffix.casefold() != '.csv' or p.suffix.casefold() != '.csv')]
-    selecionados = disponiveis if len(arquivos) == 1 else escolher_anexos(disponiveis, entrada, saida)
+    selecionados = disponiveis if len(arquivos) == 1 and len(bancos) == 1 else escolher_anexos(disponiveis, entrada, saida)
     tela.texto(f'Anexos selecionados: {len(selecionados)} - ' + (', '.join(p.name for p in selecionados) or 'nenhum'))
     return banco, arquivo, selecionados

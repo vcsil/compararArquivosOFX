@@ -1,8 +1,11 @@
-# ComparaOFX 2.0
+# ComparaOFX — candidata 2.1
 
 Aplicativo de console para Windows que **organiza extratos OFX por instituição e data** e identifica movimentações novas sem duplicar transações já importadas.
 
 A versão 2.0 mantém a interface colorida com Colorama, usa um ícone azul e acrescenta verificações de identidade financeira, recuperação de operações interrompidas e proteção dos arquivos originais.
+
+A release estável continua sendo v2.0.0. Esta branch contém a candidata 2.1.
+Consulte [compatibilidade bancária, anexos, históricos e armazenamento](docs/12-compatibilidade-bancaria.md).
 
 ## Download e segurança
 

@@ -62,6 +62,8 @@ def preparar_ofx(raw, *, codificacao=None):
             raise OFXEncodingAmbiguaError("CHARSET 1252: UTF-8 e CP1252 são válidos e produzem textos diferentes; informe codificacao='utf-8' ou 'cp1252'.")
         if codificacao == 'utf-8':
             head = head[:charset.start(1)] + b'NONE' + head[charset.end(1):]
+    # VERSION 100 é exportação SGML legada, equivalente à sintaxe 1.02 aceita.
+    head = re.sub(br'(?im)^(VERSION\s*:)100(?=\s*$)', br'\g<1>102', head)
     header, message = parse_header(io.BytesIO(head + body))
     return 'sgml', str(header).replace('\r\n', '\n'), message
 
@@ -87,8 +89,17 @@ def interpretar_ofx(formato, corpo):
         element.tail = None
     if root.tag != 'OFX':
         raise ValueError('O elemento raiz deve ser OFX')
+    from .ofx_compat import normalizar_arvore, OFXCompatError
+    alteracoes = normalizar_arvore(root)
     tree._root = root
-    model = tree.convert()
+    try:
+        with warnings.catch_warnings(record=True) as avisos:
+            # Avisos são sinalizados sem imprimir seu conteúdo privado.
+            warnings.simplefilter('always')
+            model = tree.convert()
+    except (ValueError, TypeError, ArithmeticError) as exc:
+        raise OFXCompatError('OFX inválido ou metadado incompatível com a biblioteca; documento preservado') from exc
+    model._normalizacoes = alteracoes + (('Biblioteca sinalizou avisos de compatibilidade; confira o documento',) if avisos else ())
     # ofxtools normaliza datas lidas em UTC; restaure o deslocamento explícito
     # de DTPOSTED para preservar também o dia local e a informação de fuso.
     nodes = list(root.iter('STMTTRN'))

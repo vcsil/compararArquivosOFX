@@ -43,7 +43,8 @@ def main():
                               capture_output=True, timeout=120, env=candidate_env)
         if b'\x1b[' in proc.stdout or b'\x1b[' in proc.stderr:
             raise AssertionError('Saída redirecionada contém códigos ANSI')
-        if b'COMPARAOFX 2.0' not in proc.stdout or b'Selecione a institui' not in proc.stdout:
+        cabecalho = b'COMPARAOFX 2.0' if '--skip-rede-csv' in sys.argv[2:] else b'COMPARAOFX 2.1 (CANDIDATA)'
+        if cabecalho not in proc.stdout or b'Selecione a institui' not in proc.stdout:
             raise AssertionError('Cabeçalho ou menu ausente na saída redirecionada')
         if proc.returncode != 0:
             raise RuntimeError(f'Candidato falhou com código {proc.returncode}: {proc.stderr.decode(errors="backslashreplace")}')
@@ -187,6 +188,46 @@ def main():
             if len(list(rede.rglob('vendas_rede.csv'))) != 2:
                 raise AssertionError('Conflito CSV arquivado indevidamente')
             print('Smoke CSV Rede aprovado (importação, reimportação e conflito):', exe.name)
+        if '--skip-rede-csv' not in sys.argv[2:]:
+            # Novas regressões de exportadores e pastas antigas em um ambiente
+            # independente; a baseline 2.0 não precisa desses adaptadores.
+            with tempfile.TemporaryDirectory(prefix='compara compat ') as compat_tmp:
+                compat_base = Path(compat_tmp)
+                app = compat_base / 'Aplicacao'; app.mkdir()
+                if exe.parent.name.endswith('.dist'):
+                    shutil.copytree(exe.parent, app, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(exe, app / exe.name)
+                binary = app / exe.name
+                banco = app / 'Banco Sintetico'; banco.mkdir()
+                antigo = banco / '11 - Nov 2026' / '2026-11-12'
+                antigo.mkdir(parents=True); (antigo / '01').mkdir()
+                raw = fixture([('20261110120000', '20', 'COMPAT-A', 'Sintetico')])
+                org = b'<FI><ORG>Instituicao Financeira Sintetica de Teste Comprido<FID>SYNTH</FI>'
+                raw = raw.replace(b'<LANGUAGE>POR', b'<LANGUAGE>POR' + org)
+                raw = raw.replace(b'<DTSERVER>20230103120000', b'<DTSERVER>00000000000000')
+                raw = raw.replace(b'<DTASOF>20230103120000', b'<DTASOF>00000000000000')
+                historico = antigo / 'OFXGeral-2026-11-12.ofx'
+                historico.write_bytes(raw)
+                entrada = app / 'Entrada.ofx'
+                novo = fixture([('20261110120000', '20', 'COMPAT-A', 'Sintetico'),
+                                ('20261111120000', '10', 'COMPAT-B', 'Novo')])
+                novo = novo.replace(b'<LANGUAGE>POR', b'<LANGUAGE>POR' + org)
+                novo = novo.replace(b'<DTSERVER>20230103120000', b'<DTSERVER>00000000000000')
+                novo = novo.replace(b'<DTASOF>20230103120000', b'<DTASOF>00000000000000')
+                entrada.write_bytes(novo)
+                planilha = app / 'Anexo.xls'; planilha.write_bytes(b'planilha opaca sintetica')
+                proc = subprocess.run([str(binary)], cwd=compat_base, input=b'1\n',
+                                      capture_output=True, timeout=120, env=candidate_env)
+                if proc.returncode or entrada.exists() or planilha.exists():
+                    raise AssertionError('Compatibilidade de exportadores/legado/anexo XLS falhou: ' + repr((proc.stdout,proc.stderr)))
+                copies = list(banco.rglob('Anexo.xls'))
+                if len(copies) != 1 or copies[0].read_bytes() != b'planilha opaca sintetica' or historico.read_bytes() != raw:
+                    raise AssertionError('Smoke de compatibilidade alterou anexo ou histórico legado')
+                clean = [p for p in banco.rglob('*.ofx') if eh_nome_limpo(p.name, legado=False)]
+                if len(clean) != 1 or [t.fitid for t in carregar_ofx(clean[0])[1].statements[0].transactions] != ['COMPAT-B']:
+                    raise AssertionError('Smoke de compatibilidade perdeu ou duplicou transações')
+                print('Smoke metadados, XLS e histórico legado aprovado:', exe.name)
         print('Smoke sintético aprovado:', exe.name)
 
 
