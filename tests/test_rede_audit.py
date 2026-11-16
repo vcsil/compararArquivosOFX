@@ -117,7 +117,7 @@ class AuditoriaRede(unittest.TestCase):
         original=self.root/'extrato.ofx';original.write_bytes((FIXTURES/'rede_notebook.ofx').read_bytes())
         with self.assertRaises(OrganizacaoError):planejar(self.root,other,original,[src])
     def identified(self,nsu,est='12345678'):
-        src=self.source(linha(nsu));s=src.read_text()
+        src=self.source(linha(nsu));s=src.read_text(encoding='utf-8')
         rows=s.splitlines();rows[0]+=';número do estabelecimento';rows[1]+=';'+est
         src.write_text('\n'.join(rows)+'\n',encoding='utf-8');return src
     def test_establishment_binding_and_mixed_rejection(self):
@@ -125,13 +125,13 @@ class AuditoriaRede(unittest.TestCase):
         self.assertEqual(carregar_ofx(p.geral)[1].statements[0].bankacctfrom.acctkey,'12345678')
         for src in (self.identified('B','87654321'),self.source(linha('B'))):
             with self.assertRaises(OrganizacaoError):planejar(self.root,self.bank,src,hoje=self.day)
-        src=self.identified('A');s=src.read_text();src.write_text(s+s.splitlines()[1].replace('12345678','87654321')+'\n')
+        src=self.identified('A');s=src.read_text(encoding='utf-8');src.write_text(s+s.splitlines()[1].replace('12345678','87654321')+'\n', encoding='utf-8')
         with self.assertRaises(ValueError):carregar_csv_rede(src)
     def test_legacy_establishment_requires_explicit_binding(self):
         self.import_rows(linha('A'))
         src=self.identified('B')
         with self.assertRaises(OrganizacaoError):planejar(self.root,self.bank,src,hoje=self.day)
-        (self.bank/'.rede.json').write_text(json.dumps({'estabelecimento':'12345678'}))
+        (self.bank/'.rede.json').write_text(json.dumps({'estabelecimento':'12345678'}), encoding='utf-8')
         p=planejar(self.root,self.bank,src,hoje=self.day);executar(p)
         self.assertEqual(len(transacoes(carregar_ofx(p.geral)[1])),2)
     def test_recovery_each_publication_boundary(self):
@@ -139,10 +139,13 @@ class AuditoriaRede(unittest.TestCase):
             with self.subTest(boundary=boundary),tempfile.TemporaryDirectory() as tmp:
                 root=Path(tmp);bank=root/'Rede';bank.mkdir();src=root/'vendas.csv';raw=dados(linha('A'));src.write_bytes(raw)
                 p=planejar(root,bank,src,hoje=self.day)
+                injected = []
                 if boundary=='unlink':
                     real=Path.unlink
                     def stop(path,*a,**kw):
-                        if path==src:raise OSError('injetada')
+                        if src.exists() and path.samefile(src):
+                            injected.append('before removal')
+                            raise OSError('injetada')
                         return real(path,*a,**kw)
                     ctx=patch.object(Path,'unlink',stop)
                 else:
@@ -155,6 +158,8 @@ class AuditoriaRede(unittest.TestCase):
                     ctx=patch.object(ss,boundary,side_effect=stop)
                 with ctx,self.assertRaises(OSError):executar(p)
                 self.assertEqual(src.read_bytes(),raw)
+                if boundary=='unlink':
+                    self.assertEqual(injected, ['before removal'])
                 if boundary=='publicar_pasta':
                     with ss.bloquear(bank),self.assertRaises(OrganizacaoError):
                         ss.recuperar_concluida(bank)
@@ -198,6 +203,7 @@ class AuditoriaRede(unittest.TestCase):
             with self.subTest(moment=moment),tempfile.TemporaryDirectory() as tmp:
                 root=Path(tmp);bank=root/'Rede';bank.mkdir();src=root/'vendas.csv';raw=dados(linha('A'));src.write_bytes(raw)
                 p=planejar(root,bank,src,hoje=self.day)
+                injected = []
                 if moment=='copy':
                     real=shutil.copyfileobj
                     def stop(*a,**kw):real(*a,**kw);raise OSError('injetada')
@@ -205,14 +211,22 @@ class AuditoriaRede(unittest.TestCase):
                 elif moment=='removed':
                     real=Path.unlink
                     def stop(path,*a,**kw):
+                        original = src.exists() and path.samefile(src)
                         real(path,*a,**kw)
-                        if path==src:raise OSError('injetada')
+                        if original:
+                            injected.append('after removal')
+                            raise OSError('injetada')
                     ctx=patch.object(Path,'unlink',stop)
                 else:
                     real=ss.publicar_arquivo
                     def stop(*a,**kw):real(*a,**kw);raise OSError('injetada')
                     ctx=patch.object(ss,'publicar_arquivo',side_effect=stop)
                 with ctx,self.assertRaises(OSError):executar(p)
+                if moment=='removed':
+                    self.assertEqual(injected, ['after removal'])
+                    self.assertFalse(src.exists())
+                else:
+                    self.assertEqual(src.read_bytes(), raw)
                 if moment=='recovery':
                     with patch.object(Path,'unlink',side_effect=OSError('injetada')),ss.bloquear(bank),self.assertRaises(OrganizacaoError):
                         ss.recuperar_concluida(bank)
@@ -234,3 +248,42 @@ class AuditoriaRede(unittest.TestCase):
         p.historico.write_bytes(before)
         with ss.bloquear(self.bank):ss.recuperar_concluida(self.bank)
         self.assertFalse(src.exists())
+
+    def test_manifest_references_use_posix_paths_and_original_hashes(self):
+        import hashlib
+        first = self.import_rows(linha('A'))
+        snapshot = first.geral
+        digest = hashlib.sha256(snapshot.read_bytes()).hexdigest()
+        src = self.source(linha('B', data='13/11/2026'))
+        plan = planejar(self.root, self.bank, src, hoje=self.day + timedelta(days=1))
+        real = ss.iniciar
+        captured = []
+        def interrupt(bank, manifest):
+            captured.append(manifest)
+            real(bank, manifest)
+            raise OSError('manifesto persistido')
+        with patch.object(ss, 'iniciar', side_effect=interrupt), self.assertRaises(OSError):
+            executar(plan)
+        refs = captured[0]['referencias_rede']
+        self.assertEqual(refs, [{'nome': snapshot.relative_to(self.bank).as_posix(),
+                                'sha256': digest}])
+        self.assertIn('/', refs[0]['nome'])
+        self.assertNotIn('\\', refs[0]['nome'])
+        ss._verificar_referencias(self.bank, captured[0])
+        self.assertEqual(hashlib.sha256(snapshot.read_bytes()).hexdigest(), digest)
+        with ss.bloquear(self.bank):
+            ss.recuperar_concluida(self.bank)
+        self.assertFalse(ss.pendencias(self.bank))
+        self.assertEqual(src.read_bytes(), dados(linha('B', data='13/11/2026')))
+
+    def test_unsafe_reference_paths_remain_rejected(self):
+        import hashlib
+        first = self.import_rows(linha('A'))
+        digest = hashlib.sha256(first.geral.read_bytes()).hexdigest()
+        relative = first.geral.relative_to(self.bank).as_posix()
+        for name in ('../' + relative, str(first.geral.absolute()),
+                     relative.replace('/', '\\'), 'C:/' + relative,
+                     '/'+relative, '2026/../' + relative):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                ss._verificar_referencias(self.bank, {'referencias_rede': [
+                    {'nome': name, 'sha256': digest}]})

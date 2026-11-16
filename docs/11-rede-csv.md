@@ -205,3 +205,32 @@ Mantenha PR #2 em draft até concluir Windows; não fazer merge, tag ou release.
 
 O workflow do PR faz uma execução por atualização: a branch 2.1 não dispara
 também o evento push, evitando builds duplicados com pull_request synchronize.
+
+## Correção das falhas Windows do commit 4b3377d
+
+A execução [43893190183](https://github.com/vcsil/compararArquivosOFX/actions/runs/43893190183)
+identificou três problemas de portabilidade, sem necessidade de alterar o motor
+financeiro:
+
+1. `referencias_rede` era serializado com `str(Path)`, gerando barras invertidas
+   no Windows, corretamente rejeitadas pelo validador. Agora usa `as_posix()`.
+   A validação de segurança permanece intacta: caminhos absolutos, `..`, drives
+   indevidos e barras invertidas continuam bloqueados. Um teste captura o
+   manifesto persistido, confere o snapshot e seu SHA-256 e executa recuperação.
+2. Fixtures UTF-8 eram lidas e, em um caso, regravadas sem encoding explícito.
+   Todas as leituras/escritas textuais dessas fixtures agora declaram UTF-8,
+   incluindo a configuração sintética. O leitor de relatórios reais continua
+   testando UTF-8 e Windows-1252 normalmente.
+3. Os mocks de `Path.unlink` comparavam representações de caminhos. Agora usam
+   `samefile()` enquanto ambos existem. No caso pós-remoção a identidade é
+   capturada antes do `unlink`. Os testes exigem exatamente uma injeção no
+   original, conferem se ele deve existir e validam cópia byte a byte e recuperação.
+
+Validação local após essas correções: **186 testes Linux**, sendo 175 aprovados,
+sete falhas esperadas e quatro ignorados por exigirem Windows. O acréscimo de dois
+casos cobre o formato do manifesto e a rejeição de referências inseguras.
+A contagem de 184 acima corresponde à auditoria anterior, não à revisão atual.
+Resultados Windows, builds e hashes desta revisão só serão registrados depois de
+confirmados no novo HEAD. Não reutilizar resultados nem hashes da execução antiga.
+Os executáveis continuam candidatos sem assinatura digital; a situação do alerta
+histórico do Defender permanece a descrita acima.

@@ -212,7 +212,7 @@ def executar(plano, *, bloqueio=None):
     }
     if plano.original.suffix.casefold() == '.csv':
         manifest['referencias_rede'] = [
-            {'nome': str(p.relative_to(plano.banco)), 'sha256': digest.hex()}
+            {'nome': p.relative_to(plano.banco).as_posix(), 'sha256': digest.hex()}
             for p, digest in plano.hashes.items()
             if p not in (plano.original, *plano.anexos, plano.geral)
         ]
