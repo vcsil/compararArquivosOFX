@@ -12,6 +12,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import zipfile
+import warnings
 from datetime import date
 from decimal import Decimal
 from test_baseline import fixture, A
@@ -85,6 +86,16 @@ class Compatibilidade(unittest.TestCase):
         signon=raw[a:b];altered=(raw[:a]+raw[b:]).replace(b'</OFX>',signon+b'</OFX>')
         altered=altered.replace(b'<TRNUID>1',b'').replace(b'</STMTTRNRS>',b'<TRNUID>1</STMTTRNRS>')
         self.assertEqual(_assinatura(self.ler(raw)),_assinatura(self.ler(altered)))
+    def test_serializacao_nao_imprime_texto_longo_e_preserva_o_campo(self):
+        texto='TEXTO-SINTETICO-NAO-IMPRIMIR-' * 3
+        raw=fixture([A]).replace(b'<MEMO>', b'<NAME>'+texto.encode()+b'<MEMO>')
+        with warnings.catch_warnings(record=True) as captured:
+            warnings.simplefilter('always')
+            model=self.ler(raw)
+            payload=serializar_ofx(model)
+        self.assertEqual(captured, [])
+        restored=interpretar_ofx('xml',payload)
+        self.assertEqual(restored.statements[0].transactions[0].name,texto)
     def test_erro_nao_divulga_conteudo_financeiro(self):
         with self.assertRaises(OFXCompatError) as cm:self.ler(fixture([A]).replace(b'<TRNTYPE>CREDIT',b'<TRNTYPE>SEGREDO-FINANCEIRO'))
         self.assertNotIn('SEGREDO',str(cm.exception))

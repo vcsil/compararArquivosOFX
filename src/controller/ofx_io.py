@@ -125,4 +125,9 @@ def interpretar_ofx(formato, corpo):
 def serializar_ofx(ofx):
     """Gera XML OFX 2.03 em UTF-8, independente do encoding do processo."""
     header = str(OFXHeaderV2(version=203)).encode('utf-8')
-    return header + ET.tostring(ofx.to_etree(), encoding='utf-8')
+    with warnings.catch_warnings(record=True) as avisos:
+        warnings.simplefilter('always')
+        root = ofx.to_etree()
+    # Os avisos de leitura já são sinalizados por códigos sanitizados.
+    # Não repetir o texto privado na saída nem modificar o modelo serializado.
+    return header + ET.tostring(root, encoding='utf-8')
