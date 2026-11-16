@@ -55,7 +55,19 @@ Os nomes e horários ilustram a convenção de organização, não dados bancár
 
 A partir da integração candidata da versão 2.1, se existir uma pasta de instituição chamada exatamente **`Rede`** (independente de maiúsculas/minúsculas), o aplicativo também poderá importar os relatórios de vendas **`.csv`** da Rede. Escolha o arquivo CSV e a instituição Rede no menu; o programa fará a conversão em memória, preservará o CSV original e criará os OFX Limpo e Geral pela mesma rotina segura dos extratos OFX.
 
-**Não é um leitor CSV genérico:** o arquivo deve conter as colunas do relatório da Rede e somente vendas aprovadas são convertidas. Consulte [mapeamento, limitações e exemplos](docs/11-rede-csv.md). CSV não é aceito como extrato das outras instituições. A release `v2.0.0` não contém essa funcionalidade, que está em desenvolvimento separado.
+**Não é um leitor CSV genérico:** o arquivo deve conter as colunas do relatório da Rede e somente vendas aprovadas são convertidas. Consulte [mapeamento, limitações e exemplos](docs/11-rede-csv.md). O layout Rede é aceito somente na instituição Rede; o layout Valori tem conversor próprio. A release `v2.0.0` não contém essa funcionalidade, que está em desenvolvimento separado.
+
+## Extratos CSV da Valori
+
+A candidata 2.1 também identifica o relatório de recebimentos da **`Valori`** pelo
+cabeçalho, sem confundi-lo com Rede ou `Valori - Banking`. Converte recebimentos
+**Pago** pelo valor líquido na data de pagamento; Crédito à Vista, Débito e Pix
+são entradas do estabelecimento. Mantém o CSV original, XLSX selecionado,
+deduplicação, proteção contra conflitos e recuperação de interrupções.
+
+**Históricos antigos `ACCTTYPE=CC` permanecem bloqueados** quando não há prova de
+vinculação da conta à Loja. Não remova históricos para forçar a importação.
+Consulte [regras, evidências privadas sanitizadas, limites e homologação](docs/12-valori-csv.md).
 
 ## Observações de uso
 
@@ -67,8 +79,8 @@ A partir da integração candidata da versão 2.1, se existir uma pasta de insti
 
 ## CSV da Rede — candidata 2.1
 
-A branch do PR #2 aceita CSV de vendas somente na instituição chamada exatamente
-`Rede`, com conversão em memória e preservação dos bytes originais. Consulte
+A branch do PR #2 aceita o layout CSV de vendas Rede somente na instituição chamada
+exatamente `Rede`, com conversão em memória e preservação dos bytes originais. Consulte
 [regras, identidade, lotes e pendências de homologação](docs/11-rede-csv.md).
 A versão estável publicada continua sendo 2.0.0; a candidata depende da validação
 dos executáveis Windows antes de aprovação.

@@ -57,3 +57,16 @@ class ColoramaAudit(unittest.TestCase):
             report.write_text('<nuitka-compilation-report completion="yes"><module name="controller.workflow"/><module name="ofxtools.Parser"/><module name="colorama"/></nuitka-compilation-report>')
             with patch.object(sys, 'argv', ['audit','nuitka',str(report),str(out),'--require-colorama']), contextlib.redirect_stdout(io.StringIO()):
                 audit.main()
+
+class ValoriAudit(unittest.TestCase):
+    def test_build_exige_despachante_e_conversor_valori(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); report=root/'report.xml'; out=root/'inventory.json'
+            for modules in (['controller.workflow','ofxtools.Parser'],
+                            ['controller.workflow','ofxtools.Parser','controller.valori_csv'],
+                            ['controller.workflow','ofxtools.Parser','controller.valori_csv','controller.csv_formats']):
+                report.write_text('<nuitka-compilation-report completion="yes">'+''.join(f'<module name="{m}"/>' for m in modules)+'</nuitka-compilation-report>')
+                with patch.object(sys,'argv',['audit','nuitka',str(report),str(out),'--require-valori']), contextlib.redirect_stdout(io.StringIO()):
+                    if 'controller.csv_formats' not in modules:
+                        with self.assertRaisesRegex(ValueError,'Valori'): audit.main()
+                    else: audit.main()

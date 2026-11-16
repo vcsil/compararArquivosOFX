@@ -189,6 +189,75 @@ def main():
                 raise AssertionError('Conflito CSV arquivado indevidamente')
             print('Smoke CSV Rede aprovado (importação, reimportação e conflito):', exe.name)
         if '--skip-rede-csv' not in sys.argv[2:]:
+            from decimal import Decimal
+            from test_valori_csv import dados, linha
+            # Os dois layouts coexistem; Banking nunca habilita conversão CSV.
+            valori = root / 'Valori'; valori.mkdir()
+            banking = root / 'Valori - Banking'; banking.mkdir()
+            csv_source.write_bytes(csv_data)
+            val_source = root / 'vendas_valori.csv'
+            val_rows = [linha('VAL-C'), linha('VAL-D', **{'Tipo compra':'Débito'}),
+                        linha('VAL-P', **{'Tipo compra':'PIX','Id do Pix':'E-VAL-1'})]
+            val_bytes = dados(*val_rows, encoding='cp1252')
+            val_source.write_bytes(val_bytes)
+            xlsx = root / 'Valori.xlsx'; xlsx.write_bytes(b'ANEXO SINTETICO XLSX')
+            proc = subprocess.run([str(candidate)], cwd=base, input=b'2\n1\nt\n',
+                                  capture_output=True, timeout=120, env=candidate_env)
+            if proc.returncode or val_source.exists() or xlsx.exists() or not csv_source.exists():
+                raise AssertionError('Roteamento simultâneo Rede/Valori ou anexo XLSX falhou: ' + repr((proc.stdout,proc.stderr)))
+            copies=list(valori.rglob(val_source.name)); generals=list(valori.rglob('OFXGeral-*.ofx'))
+            cleans=[p for p in valori.rglob('*.ofx') if eh_nome_limpo(p.name, legado=False)]
+            if len(copies)!=1 or copies[0].read_bytes()!=val_bytes or len(generals)!=1 or len(cleans)!=1:
+                raise AssertionError('Valori não preservou original e saídas')
+            annexes=list(valori.rglob('Valori.xlsx'))
+            if len(annexes)!=1 or annexes[0].read_bytes()!=b'ANEXO SINTETICO XLSX':
+                raise AssertionError('Anexo XLSX Valori não preservado')
+            for path in (generals[0],cleans[0]):
+                txs=carregar_ofx(path)[1].statements[0].transactions
+                if ({t.fitid for t in txs}!={'VAL-C','VAL-D','PIX:E-VAL-1'}
+                        or any(t.trntype!='CREDIT' or t.trnamt!=Decimal('970.25')
+                               or t.dtposted.date()!=date(2026,11,12) for t in txs)):
+                    raise AssertionError('Valor, data ou sinal financeiro Valori divergente')
+            # A entrada Rede deixada na raiz é processada exclusivamente pela Rede.
+            proc = subprocess.run([str(candidate)], cwd=base, input=b'1\n',
+                                  capture_output=True, timeout=120, env=candidate_env)
+            if proc.returncode or csv_source.exists() or list(banking.iterdir()):
+                raise AssertionError('Integração Valori alterou o roteamento Rede/Banking')
+            before=generals[0].read_bytes(); val_source.write_bytes(val_bytes)
+            proc = subprocess.run([str(candidate)], cwd=base, input=b'1\n',
+                                  capture_output=True, timeout=120, env=candidate_env)
+            clean_counts=sorted(len(carregar_ofx(p)[1].statements[0].transactions)
+                                for p in valori.rglob('*.ofx') if eh_nome_limpo(p.name,legado=False))
+            if proc.returncode or val_source.exists() or generals[0].read_bytes()!=before or clean_counts!=[0,3]:
+                raise AssertionError('Reimportação Valori não foi idempotente')
+            conflict=dados(linha('VAL-C', **{'Valor líquido':'900,00'}),encoding='cp1252')
+            val_source.write_bytes(conflict)
+            proc = subprocess.run([str(candidate)], cwd=base, input=b'1\n',
+                                  capture_output=True, timeout=120, env=candidate_env)
+            if proc.returncode==0 or val_source.read_bytes()!=conflict or generals[0].read_bytes()!=before:
+                raise AssertionError('Conflito Valori não bloqueou preservando os dados')
+            recovery_bytes=dados(linha('VAL-NOVO', **{'Data de pagamento':'13/11/2026'}))
+            val_source.write_bytes(recovery_bytes)
+            plan=planejar(root,valori,val_source,hoje=date.today())
+            real_publish=safe_storage.publicar_arquivo
+            def interromper_valori(*args):
+                real_publish(*args)
+                raise OSError('Interrupção Valori sintética')
+            try:
+                with patch.object(safe_storage,'publicar_arquivo',side_effect=interromper_valori): executar(plan)
+            except OSError as exc:
+                if str(exc)!='Interrupção Valori sintética': raise
+            else: raise AssertionError('Interrupção Valori não ocorreu')
+            saved_general=plan.geral.read_bytes()
+            proc = subprocess.run([str(candidate)], cwd=base, input=b'',
+                                  capture_output=True, timeout=120, env=candidate_env)
+            if (proc.returncode or val_source.exists() or safe_storage.pendencias(valori)
+                    or plan.geral.read_bytes()!=saved_general
+                    or (plan.importacao/val_source.name).read_bytes()!=recovery_bytes
+                    or len(carregar_ofx(plan.geral)[1].statements[0].transactions)!=4):
+                raise AssertionError('Recuperação e conservação do acumulador Valori falharam')
+            print('Smoke CSV Valori aprovado (dois formatos, XLSX, reimportação, conflito e recuperação):', exe.name)
+        if '--skip-rede-csv' not in sys.argv[2:]:
             # Novas regressões de exportadores e pastas antigas em um ambiente
             # independente; a baseline 2.0 não precisa desses adaptadores.
             with tempfile.TemporaryDirectory(prefix='compara compat ') as compat_tmp:

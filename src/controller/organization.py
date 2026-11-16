@@ -71,42 +71,54 @@ def extratos(raiz):
                    and not p.name.startswith(('~', '.'))), key=lambda p: (p.name.casefold(), p.name))
 
 
+def csvs_extrato(raiz):
+    from .csv_formats import identificar_csv, formato_permitido
+    bancos = instituicoes(raiz)
+    result = []
+    for p in raiz.iterdir():
+        if not _regular(p) or p.suffix.casefold() != '.csv' or p.name.startswith(('~', '.')):
+            continue
+        try:
+            formato = identificar_csv(p)
+        except (ValueError, OSError):
+            continue
+        if any(formato_permitido(b, formato) for b in bancos):
+            result.append(p)
+    return sorted(result, key=lambda p: (p.name.casefold(), p.name))
+
+
 def csvs_rede(raiz):
-    """Relatórios CSV elegíveis somente para a instituição 'Rede'."""
-    if not any(p.name.casefold() == 'rede' for p in instituicoes(raiz)):
-        return []
-    return sorted((p for p in raiz.iterdir()
-                   if _regular(p) and p.suffix.casefold() == '.csv'
-                   and not p.name.startswith(('~', '.'))),
-                  key=lambda p: (p.name.casefold(), p.name))
+    # API anterior preservada, agora filtrando o conteúdo de fato.
+    from .csv_formats import identificar_csv
+    return [p for p in csvs_extrato(raiz) if identificar_csv(p) == 'rede']
 
 
 def extrato_permitido(banco, arquivo):
-    """Não autorizar CSV como extrato de outras instituições."""
-    extensao = Path(arquivo).suffix.casefold()
-    return extensao == '.ofx' or (extensao == '.csv' and Path(banco).name.casefold() == 'rede')
+    from .csv_formats import identificar_csv, formato_permitido
+    path = Path(arquivo)
+    if path.suffix.casefold() == '.ofx':
+        return True
+    try:
+        return path.suffix.casefold() == '.csv' and formato_permitido(banco, identificar_csv(path))
+    except (OSError, ValueError):
+        return False
 
 
 def csv_rede_identificado(path):
-    if Path(path).suffix.casefold() != '.csv':
-        return False
-    from .rede_csv import _ler
+    from .csv_formats import identificar_csv
     try:
-        _ler(path)
-        return True
-    except (ValueError, UnicodeError):
-        # Cabeçalho reconhecível com corpo inválido também não é um anexo.
-        from .rede_csv import normalizar, CAMPOS
-        first = Path(path).read_bytes().splitlines()[:1]
-        text = normalizar(first[0].decode('cp1252', errors='replace')) if first else ''
-        return 'nsu/cv' in text and 'status da venda' in text
-    except Exception:
-        # Falha de leitura/parsing: nunca arquivar automaticamente um CSV incerto.
-        return True
+        return identificar_csv(path) == 'rede'
+    except (ValueError, OSError):
+        return False
+
+
+def csv_bancario_identificado(path):
+    from .csv_formats import csv_bancario
+    return csv_bancario(path)
 
 
 def anexos(raiz):
-    return sorted((p for p in raiz.iterdir() if _regular(p) and p.suffix.casefold() in ANEXOS and not csv_rede_identificado(p)
+    return sorted((p for p in raiz.iterdir() if _regular(p) and p.suffix.casefold() in ANEXOS and not csv_bancario_identificado(p)
                    and not p.name.startswith(('~', '.'))), key=lambda p: (p.name.casefold(), p.name))
 
 

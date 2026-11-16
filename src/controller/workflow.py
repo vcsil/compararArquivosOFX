@@ -72,26 +72,33 @@ def planejar(raiz, banco, original, anexos=(), hoje=None, leitor=None, relogio=N
     names = [p.name.casefold() for p in arquivos] + [limpo_nome.casefold()]
     if len(set(names)) != len(names):
         raise OrganizacaoError('Colisão entre nomes de arquivos de destino')
-    from .organization import csv_rede_identificado
-    if not extrato_permitido(banco, original) or any(p.suffix.casefold() not in ANEXOS or csv_rede_identificado(p) for p in anexos):
+    from .organization import csv_bancario_identificado
+    if not extrato_permitido(banco, original) or any(p.suffix.casefold() not in ANEXOS or csv_bancario_identificado(p) for p in anexos):
         raise OrganizacaoError('Tipo de extrato ou anexo não permitido')
     if any(p.stat().st_nlink > 1 for p in arquivos):
         raise OrganizacaoError('Arquivos com múltiplos links físicos não são suportados')
     hashes = {p: _hash(p) for p in arquivos}
     leitor = leitor or carregar_ofx
+    formato_csv = None
     if original.suffix.casefold() == '.csv':
-        from .rede_csv import carregar_csv_rede
-        _, atual = carregar_csv_rede(original)
+        from .csv_formats import identificar_csv, carregar_csv
+        formato_csv = identificar_csv(original)
+        _, atual = carregar_csv(original, formato_csv)
     else:
         _, atual = leitor(original)
     historico = localizar_historico(banco, hoje)
     if historico and historico.stat().st_nlink > 1:
         raise OrganizacaoError('Histórico com múltiplos links físicos não é suportado')
     antes = _hash(historico) if historico else None
-    anterior = leitor(historico)[1] if historico else None
+    if formato_csv == 'valori':
+        from .valori_csv import carregar_historico
+        ler_historico = carregar_historico
+    else:
+        ler_historico = leitor
+    anterior = ler_historico(historico)[1] if historico else None
     if historico and _hash(historico) != antes:
         raise OrganizacaoError('Histórico alterado durante a leitura')
-    if original.suffix.casefold() == '.csv':
+    if formato_csv == 'rede':
         import json
         from .rede_csv import analisar_lotes
         config = banco / '.rede.json'
@@ -123,6 +130,20 @@ def planejar(raiz, banco, original, anexos=(), hoje=None, leitor=None, relogio=N
                 hashes[snapshot] = digest
             anterior = consolidar_historicos(modelos, estabelecimento)
         resultado = analisar_lotes(atual, anterior, estabelecimento)
+    elif formato_csv == 'valori':
+        from .valori_csv import analisar_lotes, consolidar_historicos
+        from .organization import historicos_validos
+        modelos = []
+        for _, snapshot in historicos_validos(banco, hoje):
+            if snapshot.stat().st_nlink != 1:
+                raise OrganizacaoError('Snapshot Valori com múltiplos links')
+            digest = _hash(snapshot)
+            modelos.append(ler_historico(snapshot)[1])
+            if _hash(snapshot) != digest:
+                raise OrganizacaoError('Snapshot Valori alterado durante leitura')
+            hashes[snapshot] = digest
+        anterior = consolidar_historicos(modelos)
+        resultado = analisar_lotes(atual, anterior)
     else:
         resultado = analisar(atual, anterior)
     if resultado.relatorio.estado == 'BLOQUEADO':
@@ -161,8 +182,10 @@ def planejar(raiz, banco, original, anexos=(), hoje=None, leitor=None, relogio=N
             from decimal import Decimal
             from .ofx_comparison import _validar_transacoes
             statement = copia.statements[0]
-            _validar_transacoes(statement.transactions, 'Acumulador Rede')
+            _validar_transacoes(statement.transactions, 'Acumulador CSV')
             statement.ledgerbal.balamt = sum((t.trnamt for t in statement.transactions), Decimal('0'))
+            if formato_csv == 'valori':
+                statement.banktranlist.dtstart = min(t.dtposted for t in statement.transactions)
             statement.banktranlist.dtend = max(t.dtposted for t in statement.transactions)
             statement.ledgerbal.dtasof = statement.banktranlist.dtend
         geral_bytes = serializar_ofx(copia)
@@ -214,7 +237,11 @@ def executar(plano, *, bloqueio=None):
         'arquivos': [{'nome': p.name, 'sha256': plano.hashes[p].hex()} for p in (plano.original, *plano.anexos)]
     }
     if plano.original.suffix.casefold() == '.csv':
-        manifest['referencias_rede'] = [
+        from .csv_formats import identificar_csv
+        formato = identificar_csv(plano.original)
+        manifest['formato_csv'] = formato
+        campo = 'referencias_rede' if formato == 'rede' else 'referencias_csv'
+        manifest[campo] = [
             {'nome': p.relative_to(plano.banco).as_posix(), 'sha256': digest.hex()}
             for p, digest in plano.hashes.items()
             if p not in (plano.original, *plano.anexos, plano.geral)

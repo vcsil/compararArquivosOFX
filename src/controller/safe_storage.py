@@ -129,19 +129,42 @@ def exigir_sem_pendencias(banco):
         raise OrganizacaoError('Operação pendente em .comparaofx; preserve os arquivos e faça inspeção antes de continuar')
 
 
+def _validar_csv_manifesto(banco, manifesto, arquivo):
+    from .csv_formats import identificar_csv, formato_permitido
+    formato = manifesto.get('formato_csv')
+    if arquivo.suffix.casefold() != '.csv':
+        if formato is not None:
+            raise ValueError('Descritor CSV associado a OFX')
+        return
+    identificado = identificar_csv(arquivo)
+    if not formato_permitido(banco, identificado):
+        raise ValueError('CSV não corresponde à instituição na recuperação')
+    if formato is not None and formato != identificado:
+        raise ValueError('Descritor CSV diverge do conteúdo')
+    if identificado == 'valori' and formato != 'valori':
+        raise ValueError('CSV Valori exige descritor explícito no manifesto')
+
+
 def _verificar_referencias(banco, manifesto):
-    """Referências adicionais opcionais da Rede; manifestos v1/v2 antigos continuam válidos."""
+    """Verifica referências CSV sem mudar manifestos v1/v2 anteriores."""
     from .organization import pasta_dia
-    refs = manifesto.get('referencias_rede', [])
-    if not isinstance(refs, list):
-        raise ValueError('Referências Rede inválidas')
-    if refs and banco.name.casefold() != 'rede':
-        raise ValueError('Referências CSV fora da instituição Rede')
+    refs_rede = manifesto.get('referencias_rede', [])
+    refs_csv = manifesto.get('referencias_csv', [])
+    if not isinstance(refs_rede, list) or not isinstance(refs_csv, list):
+        raise ValueError('Referências CSV inválidas')
+    if refs_rede and banco.name.casefold() != 'rede':
+        raise ValueError('Referências Rede fora da instituição')
+    formato = manifesto.get('formato_csv')
+    if refs_csv or formato is not None:
+        from .csv_formats import formato_permitido
+        if not formato_permitido(banco, formato):
+            raise ValueError('Formato CSV não autorizado para a instituição')
+    refs = refs_rede + refs_csv
     for item in refs:
         rel = Path(item['nome'])
         if rel.is_absolute() or rel.drive or '..' in rel.parts or '\\' in item['nome']:
             raise ValueError('Caminho de referência inválido')
-        if rel != Path('.rede.json'):
+        if not (rel == Path('.rede.json') and banco.name.casefold() == 'rede'):
             validar_historico_relativo(banco, rel)
         path = banco / rel
         for parent in (path, *path.parents):
@@ -152,13 +175,13 @@ def _verificar_referencias(banco, manifesto):
         if not path.is_file() or path.stat().st_nlink != 1:
             raise ValueError('Referência ausente ou com múltiplos links')
         if hashlib.sha256(path.read_bytes()).hexdigest() != item['sha256']:
-            raise ValueError('Referência Rede alterada')
+            raise ValueError('Referência CSV alterada')
 
 
 def _limpar_preparacao(banco, op, m):
     """Remove apenas preparação própria quando ainda não houve publicação."""
     import re
-    from .organization import ANEXOS, pasta_dia, extrato_permitido
+    from .organization import ANEXOS, pasta_dia, extrato_permitido, csv_bancario_identificado
     if not re.fullmatch(r'[0-9a-f]{32}', op.name):
         raise ValueError('identificador de operação inválido')
     pasta, geral = Path(m['pasta']), Path(m['geral'])
@@ -201,8 +224,12 @@ def _limpar_preparacao(banco, op, m):
             raise ValueError('nome inválido')
         nomes.add(nome.casefold())
         hashes_esperados[nome.casefold()] = item['sha256']
-        if (i == 0 and not extrato_permitido(banco, nome)) or (i > 0 and Path(nome).suffix.casefold() not in ANEXOS):
+        origem = banco.parent / nome
+        if link_inseguro(origem) or not origem.is_file() or origem.stat().st_nlink != 1:
+            raise ValueError('origem insegura')
+        if (i == 0 and not extrato_permitido(banco, banco.parent / nome)) or (i > 0 and (Path(nome).suffix.casefold() not in ANEXOS or csv_bancario_identificado(banco.parent / nome))):
             raise ValueError('tipo inválido')
+    _validar_csv_manifesto(banco, m, banco.parent / arquivos[0]['nome'])
     def verificar():
         _verificar_referencias(banco, m)
         for path in (banco, banco / '.comparaofx', op, op / 'pasta', *pasta.parents):
@@ -328,7 +355,7 @@ def recuperar_concluida(banco, *, bloqueio=None):
                 raise ValueError('lista de arquivos inválida')
             origens = []
             vistos = set()
-            from .organization import ANEXOS, extrato_permitido
+            from .organization import ANEXOS, extrato_permitido, csv_bancario_identificado
             for idx, item in enumerate(arquivos):
                 nome = item['nome']
                 if not isinstance(nome, str) or nome in ('', '.', '..') or Path(nome).name != nome or '\\' in nome:
@@ -336,11 +363,13 @@ def recuperar_concluida(banco, *, bloqueio=None):
                 if nome.casefold() in vistos or nome.casefold() == limpo_nome.casefold():
                     raise ValueError('nomes duplicados')
                 vistos.add(nome.casefold())
-                if (idx == 0 and not extrato_permitido(banco, nome)) or (idx > 0 and Path(nome).suffix.casefold() not in ANEXOS):
-                    raise ValueError('tipo de arquivo inválido')
                 origem, copia = banco.parent / nome, pasta / nome
-                if link_inseguro(origem) or link_inseguro(copia) or sha(copia) != item['sha256']:
+                if link_inseguro(origem) or link_inseguro(copia) or not copia.is_file() or copia.stat().st_nlink != 1 or sha(copia) != item['sha256']:
                     raise ValueError('cópia divergente')
+                if (idx == 0 and not extrato_permitido(banco, pasta / nome)) or (idx > 0 and (Path(nome).suffix.casefold() not in ANEXOS or csv_bancario_identificado(pasta / nome))):
+                    raise ValueError('tipo de arquivo inválido')
+                if idx == 0:
+                    _validar_csv_manifesto(banco, m, pasta / nome)
                 if origem.exists():
                     if not origem.is_file() or origem.stat().st_nlink != 1 or sha(origem) != item['sha256']:
                         raise ValueError('origem divergente')
