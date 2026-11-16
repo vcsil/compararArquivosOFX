@@ -265,7 +265,7 @@ class AuditoriaRede(unittest.TestCase):
         with patch.object(ss, 'iniciar', side_effect=interrupt), self.assertRaises(OSError):
             executar(plan)
         refs = captured[0]['referencias_rede']
-        self.assertEqual(refs, [{'nome': snapshot.relative_to(self.bank).as_posix(),
+        self.assertEqual(refs, [{'nome': snapshot.relative_to(first.banco).as_posix(),
                                 'sha256': digest}])
         self.assertIn('/', refs[0]['nome'])
         self.assertNotIn('\\', refs[0]['nome'])
@@ -280,7 +280,7 @@ class AuditoriaRede(unittest.TestCase):
         import hashlib
         first = self.import_rows(linha('A'))
         digest = hashlib.sha256(first.geral.read_bytes()).hexdigest()
-        relative = first.geral.relative_to(self.bank).as_posix()
+        relative = first.geral.relative_to(first.banco).as_posix()
         for name in ('../' + relative, str(first.geral.absolute()),
                      relative.replace('/', '\\'), 'C:/' + relative,
                      '/'+relative, '2026/../' + relative):
