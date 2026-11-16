@@ -2,7 +2,7 @@ name: Windows validation and candidate builds
 on:
   workflow_dispatch:
   push:
-    branches: [master, codex/comparaofx-2.0-etapa5, codex/comparaofx-2.0-etapa6, codex/comparaofx-2.0-icone-assinatura, codex/comparaofx-2.0-otimizacao-segura, codex/comparaofx-2.0-colorama, codex/comparaofx-2.1-rede-csv]
+    branches: [master, codex/comparaofx-2.0-etapa5, codex/comparaofx-2.0-etapa6, codex/comparaofx-2.0-icone-assinatura, codex/comparaofx-2.0-otimizacao-segura, codex/comparaofx-2.0-colorama]
   pull_request:
     branches: [master, codex/comparaofx-2.0-etapa5, codex/comparaofx-2.0-etapa6, codex/comparaofx-2.0-icone-assinatura, codex/comparaofx-2.0-otimizacao-segura, codex/comparaofx-2.0-colorama, codex/comparaofx-2.1-rede-csv]
 permissions:

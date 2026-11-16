@@ -62,6 +62,14 @@ A partir da integração candidata da versão 2.1, se existir uma pasta de insti
 - Para desativar cores no terminal, defina a variável de ambiente `NO_COLOR`.
 - O programa prioriza a integridade dos dados sobre a velocidade: pode levar mais tempo com milhares de transações.
 
+## CSV da Rede — candidata 2.1
+
+A branch do PR #2 aceita CSV de vendas somente na instituição chamada exatamente
+`Rede`, com conversão em memória e preservação dos bytes originais. Consulte
+[regras, identidade, lotes e pendências de homologação](docs/11-rede-csv.md).
+A versão estável publicada continua sendo 2.0.0; a candidata depende da validação
+dos executáveis Windows antes de aprovação.
+
 ## Desenvolvimento e testes
 
 Requisitos para executar a partir do código: Python 3.12 e as dependências de `requirements.txt`.

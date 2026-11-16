@@ -21,10 +21,11 @@ from controller.workflow import planejar, executar
 def main():
     exe = Path(sys.argv[1]).resolve(strict=True)
     candidate_env = os.environ.copy()
+    candidate_env.pop('PYTHONPATH', None)
+    candidate_env.pop('PYTHONHOME', None)
+    candidate_env['PATH'] = ''
     if os.name == 'nt':
         # Do not let a separately installed Python satisfy the executable.
-        candidate_env.pop('PYTHONPATH', None)
-        candidate_env.pop('PYTHONHOME', None)
         candidate_env['PATH'] = str(Path(os.environ['SystemRoot']) / 'System32')
     with tempfile.TemporaryDirectory(prefix='compara ofx ') as tmp:
         base = Path(tmp)
@@ -141,20 +142,20 @@ def main():
             csv_data = (
                 'Status da venda;Data da venda;Hora da venda;Valor líquido;NSU/CV;'
                 'Código da maquininha;Meio de pagamento;Bandeira;Modalidade;'
-                'Tipo;Número de parcelas;Pré-autorizado\\n'
+                'Tipo;Número de parcelas;Pré-autorizado\n'
                 'Aprovada;10/11/2026;12:30:05;10,50;REDE-SMOKE;'
-                'M001;Maquininha;Visa;Crédito;À vista;1;Não\\n'
+                'M001;Maquininha;Visa;Crédito;À vista;1;Não\n'
                 'Negada;10/11/2026;12:31:05;10,50;REDE-IGNORE;'
-                'M001;Maquininha;Visa;Crédito;À vista;1;Não\\n'
+                'M001;Maquininha;Visa;Crédito;À vista;1;Não\n'
             ).encode('utf-8')
             csv_source = root / 'vendas_rede.csv'
             csv_source.write_bytes(csv_data)
             # O arquivo de entrada é único; selecionar a instituição Rede.
-            proc = subprocess.run([str(candidate)], cwd=base, input=b'1\\n',
+            proc = subprocess.run([str(candidate)], cwd=base, input=b'1\n',
                                   capture_output=True, timeout=120, env=candidate_env)
             if proc.returncode:
                 raise AssertionError('Candidato falhou ao importar CSV da Rede: ' +
-                                     proc.stdout.decode(errors='backslashreplace'))
+                                     repr((proc.stdout, proc.stderr)))
             copias = list(rede.rglob('vendas_rede.csv'))
             novos = [p for p in rede.rglob('*.ofx') if eh_nome_limpo(p.name, legado=False)]
             gerais = list(rede.rglob('OFXGeral-*.ofx'))
@@ -165,7 +166,27 @@ def main():
             for path in (novos[0], gerais[0]):
                 if [t.fitid for t in carregar_ofx(path)[1].statements[0].transactions] != ['REDE-SMOKE - 12:30:05']:
                     raise AssertionError('CSV Rede convertido não preservou a venda aprovada')
-            print('Smoke CSV Rede aprovado:', exe.name)
+            # Reimportar exatamente o CSV; Limpo vazio, Geral intacto.
+            before = gerais[0].read_bytes()
+            csv_source.write_bytes(csv_data)
+            proc = subprocess.run([str(candidate)], cwd=base, input=b'1\n',
+                                  capture_output=True, timeout=120, env=candidate_env)
+            if proc.returncode or csv_source.exists() or gerais[0].read_bytes() != before:
+                raise AssertionError('Reimportação CSV duplicou dados ou falhou: ' + repr((proc.stdout, proc.stderr)))
+            copies = list(rede.rglob('vendas_rede.csv'))
+            cleans = [p for p in rede.rglob('*.ofx') if eh_nome_limpo(p.name, legado=False)]
+            counts = sorted(len(carregar_ofx(p)[1].statements[0].transactions) for p in cleans)
+            if len(copies) != 2 or any(p.read_bytes() != csv_data for p in copies) or counts != [0, 1]:
+                raise AssertionError('Reimportação CSV não preservou originais e deduplicação')
+            conflict = csv_data.replace(b'10,50;REDE-SMOKE', b'99,50;REDE-SMOKE')
+            csv_source.write_bytes(conflict)
+            proc = subprocess.run([str(candidate)], cwd=base, input=b'1\n',
+                                  capture_output=True, timeout=120, env=candidate_env)
+            if proc.returncode == 0 or csv_source.read_bytes() != conflict or gerais[0].read_bytes() != before:
+                raise AssertionError('Conflito CSV não bloqueou preservando os dados')
+            if len(list(rede.rglob('vendas_rede.csv'))) != 2:
+                raise AssertionError('Conflito CSV arquivado indevidamente')
+            print('Smoke CSV Rede aprovado (importação, reimportação e conflito):', exe.name)
         print('Smoke sintético aprovado:', exe.name)
 
 

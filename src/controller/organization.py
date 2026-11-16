@@ -87,8 +87,26 @@ def extrato_permitido(banco, arquivo):
     return extensao == '.ofx' or (extensao == '.csv' and Path(banco).name.casefold() == 'rede')
 
 
+def csv_rede_identificado(path):
+    if Path(path).suffix.casefold() != '.csv':
+        return False
+    from .rede_csv import _ler
+    try:
+        _ler(path)
+        return True
+    except (ValueError, UnicodeError):
+        # Cabeçalho reconhecível com corpo inválido também não é um anexo.
+        from .rede_csv import normalizar, CAMPOS
+        first = Path(path).read_bytes().splitlines()[:1]
+        text = normalizar(first[0].decode('cp1252', errors='replace')) if first else ''
+        return 'nsu/cv' in text and 'status da venda' in text
+    except Exception:
+        # Falha de leitura/parsing: nunca arquivar automaticamente um CSV incerto.
+        return True
+
+
 def anexos(raiz):
-    return sorted((p for p in raiz.iterdir() if _regular(p) and p.suffix.casefold() in ANEXOS
+    return sorted((p for p in raiz.iterdir() if _regular(p) and p.suffix.casefold() in ANEXOS and not csv_rede_identificado(p)
                    and not p.name.startswith(('~', '.'))), key=lambda p: (p.name.casefold(), p.name))
 
 

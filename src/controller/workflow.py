@@ -38,9 +38,10 @@ def _assinatura(modelo):
     disponivel = getattr(statement, 'availbal', None)
     saldos = (getattr(periodo, 'dtstart', None), getattr(periodo, 'dtend', None),
               getattr(ledger, 'balamt', None), getattr(ledger, 'dtasof', None),
-              getattr(disponivel, 'balamt', None), getattr(disponivel, 'dtasof', None))
+              getattr(disponivel, 'balamt', None), getattr(disponivel, 'dtasof', None),
+              getattr(statement.bankacctfrom, 'acctkey', None))
     return (conta, saldos, tuple((t.fitid, t.dtposted, t.dtposted.utcoffset(), t.trnamt,
-                          t.trntype, t.memo, t.checknum) for t in transacoes))
+                          t.trntype, t.memo, t.checknum, t.name) for t in transacoes))
 
 
 def _hash(path):
@@ -71,7 +72,8 @@ def planejar(raiz, banco, original, anexos=(), hoje=None, leitor=None, relogio=N
     names = [p.name.casefold() for p in arquivos] + [limpo_nome.casefold()]
     if len(set(names)) != len(names):
         raise OrganizacaoError('Colisão entre nomes de arquivos de destino')
-    if not extrato_permitido(banco, original) or any(p.suffix.casefold() not in ANEXOS for p in anexos):
+    from .organization import csv_rede_identificado
+    if not extrato_permitido(banco, original) or any(p.suffix.casefold() not in ANEXOS or csv_rede_identificado(p) for p in anexos):
         raise OrganizacaoError('Tipo de extrato ou anexo não permitido')
     if any(p.stat().st_nlink > 1 for p in arquivos):
         raise OrganizacaoError('Arquivos com múltiplos links físicos não são suportados')
@@ -89,7 +91,41 @@ def planejar(raiz, banco, original, anexos=(), hoje=None, leitor=None, relogio=N
     anterior = leitor(historico)[1] if historico else None
     if historico and _hash(historico) != antes:
         raise OrganizacaoError('Histórico alterado durante a leitura')
-    resultado = analisar(atual, anterior)
+    if original.suffix.casefold() == '.csv':
+        import json
+        from .rede_csv import analisar_lotes
+        config = banco / '.rede.json'
+        estabelecimento = None
+        if config.exists() or link_inseguro(config):
+            if link_inseguro(config) or link_inseguro(config.parent) or config.stat().st_nlink != 1:
+                raise OrganizacaoError('Configuração Rede insegura')
+            hashes[config] = _hash(config)
+            try:
+                estabelecimento = json.loads(config.read_text(encoding='utf-8'))['estabelecimento']
+                if not isinstance(estabelecimento, str) or not estabelecimento:
+                    raise ValueError('Estabelecimento deve ser texto não vazio')
+            except (ValueError, KeyError, TypeError) as exc:
+                raise OrganizacaoError('Configuração .rede.json inválida') from exc
+            if atual.statements[0].bankacctfrom.acctkey != estabelecimento:
+                raise OrganizacaoError('CSV não pertence ao estabelecimento configurado')
+        if historico:
+            from .rede_csv import consolidar_historicos
+            modelos = []
+            # localizar_historico já validou a hierarquia e recusou links.
+            for snapshot in sorted(banco.rglob('OFXGeral-*.ofx')):
+                if len(snapshot.relative_to(banco).parts) != 4:
+                    continue
+                if snapshot.stat().st_nlink != 1:
+                    raise OrganizacaoError('Snapshot Rede com múltiplos links')
+                digest = _hash(snapshot)
+                modelos.append(leitor(snapshot)[1])
+                if _hash(snapshot) != digest:
+                    raise OrganizacaoError('Snapshot Rede alterado durante leitura')
+                hashes[snapshot] = digest
+            anterior = consolidar_historicos(modelos, estabelecimento)
+        resultado = analisar_lotes(atual, anterior, estabelecimento)
+    else:
+        resultado = analisar(atual, anterior)
     if resultado.relatorio.estado == 'BLOQUEADO':
         raise OrganizacaoError(resultado.relatorio.motivo)
     filtrado = resultado.modelo_filtrado(atual)
@@ -110,10 +146,22 @@ def planejar(raiz, banco, original, anexos=(), hoje=None, leitor=None, relogio=N
     if resultado.relatorio.estado == 'SEM_NOVIDADES':
         # Se o dia ainda não tem Geral, preserve a referência anterior.
         geral_bytes = None if historico == geral else serializar_ofx(anterior)
+        if original.suffix.casefold() == '.csv' and historico == geral:
+            if _assinatura(leitor(historico)[1]) != _assinatura(anterior):
+                geral_bytes = serializar_ofx(anterior)
         assinatura_geral = _assinatura(anterior)
-    elif historico == geral:
+    elif historico == geral or (historico and original.suffix.casefold() == '.csv'):
         copia = interpretar_ofx('xml', serializar_ofx(anterior))
         copia.statements[0].transactions.extend(filtrado.statements[0].transactions)
+        if original.suffix.casefold() == '.csv':
+            copia.statements[0].bankacctfrom.acctkey = atual.statements[0].bankacctfrom.acctkey
+            from decimal import Decimal
+            from .ofx_comparison import _validar_transacoes
+            statement = copia.statements[0]
+            _validar_transacoes(statement.transactions, 'Acumulador Rede')
+            statement.ledgerbal.balamt = sum((t.trnamt for t in statement.transactions), Decimal('0'))
+            statement.banktranlist.dtend = max(t.dtposted for t in statement.transactions)
+            statement.ledgerbal.dtasof = statement.banktranlist.dtend
         geral_bytes = serializar_ofx(copia)
         assinatura_geral = _assinatura(copia)
     else:
@@ -162,6 +210,12 @@ def executar(plano, *, bloqueio=None):
         'limpo_hash': hashlib.sha256(plano.limpo).hexdigest(),
         'arquivos': [{'nome': p.name, 'sha256': plano.hashes[p].hex()} for p in (plano.original, *plano.anexos)]
     }
+    if plano.original.suffix.casefold() == '.csv':
+        manifest['referencias_rede'] = [
+            {'nome': str(p.relative_to(plano.banco)), 'sha256': digest.hex()}
+            for p, digest in plano.hashes.items()
+            if p not in (plano.original, *plano.anexos, plano.geral)
+        ]
     op = safe_storage.iniciar(plano.banco, manifest)
     stage = op / 'pasta'
     stage.mkdir()
@@ -212,6 +266,7 @@ def executar(plano, *, bloqueio=None):
     manifest['estado'] = 'HISTORICO_ATUALIZADO'
     safe_storage.atualizar_manifesto(op, manifest)
     for origem in (plano.original, *plano.anexos):
+        safe_storage._verificar_referencias(plano.banco, manifest)
         arquivo = plano.importacao / origem.name
         if (link_inseguro(origem) or link_inseguro(arquivo)
                 or origem.stat().st_nlink != 1 or link_inseguro(plano.geral)

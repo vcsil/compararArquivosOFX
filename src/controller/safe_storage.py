@@ -91,6 +91,36 @@ def exigir_sem_pendencias(banco):
         raise OrganizacaoError('Operação pendente em .comparaofx; preserve os arquivos e faça inspeção antes de continuar')
 
 
+def _verificar_referencias(banco, manifesto):
+    """Referências adicionais opcionais da Rede; manifestos v1/v2 antigos continuam válidos."""
+    from .organization import pasta_dia
+    refs = manifesto.get('referencias_rede', [])
+    if not isinstance(refs, list):
+        raise ValueError('Referências Rede inválidas')
+    if refs and banco.name.casefold() != 'rede':
+        raise ValueError('Referências CSV fora da instituição Rede')
+    for item in refs:
+        rel = Path(item['nome'])
+        if rel.is_absolute() or rel.drive or '..' in rel.parts or '\\' in item['nome']:
+            raise ValueError('Caminho de referência inválido')
+        if rel != Path('.rede.json'):
+            if len(rel.parts) != 4:
+                raise ValueError('Snapshot de referência inválido')
+            dia = date.fromisoformat(rel.parent.name)
+            if pasta_dia(banco, dia).relative_to(banco) != rel.parent or rel.name != f'OFXGeral-{dia.isoformat()}.ofx':
+                raise ValueError('Hierarquia de referência inválida')
+        path = banco / rel
+        for parent in (path, *path.parents):
+            if parent == banco.parent:
+                break
+            if link_inseguro(parent):
+                raise ValueError('Referência insegura')
+        if not path.is_file() or path.stat().st_nlink != 1:
+            raise ValueError('Referência ausente ou com múltiplos links')
+        if hashlib.sha256(path.read_bytes()).hexdigest() != item['sha256']:
+            raise ValueError('Referência Rede alterada')
+
+
 def _limpar_preparacao(banco, op, m):
     """Remove apenas preparação própria quando ainda não houve publicação."""
     import re
@@ -144,6 +174,7 @@ def _limpar_preparacao(banco, op, m):
         if (i == 0 and not extrato_permitido(banco, nome)) or (i > 0 and Path(nome).suffix.casefold() not in ANEXOS):
             raise ValueError('tipo inválido')
     def verificar():
+        _verificar_referencias(banco, m)
         for path in (banco, banco / '.comparaofx', op, op / 'pasta', *pasta.parents):
             if path == banco.parent: break
             if link_inseguro(path): raise ValueError('link inseguro durante limpeza')
@@ -266,6 +297,7 @@ def recuperar_concluida(banco, *, bloqueio=None):
                         if link_inseguro(path): raise ValueError('histórico inseguro')
                     if sha(historico) != m['historico_hash']:
                         raise ValueError('histórico de referência alterado')
+            _verificar_referencias(banco, m)
             arquivos = m['arquivos']
             if not isinstance(arquivos, list) or not arquivos:
                 raise ValueError('lista de arquivos inválida')
@@ -291,6 +323,7 @@ def recuperar_concluida(banco, *, bloqueio=None):
             # Todos os dados e a ausência de alterações são verificados antes de
             # cada remoção. O manifesto persiste mesmo após uma remoção parcial.
             for origem, copia, digest in origens:
+                _verificar_referencias(banco, m)
                 if (link_inseguro(origem) or link_inseguro(copia)
                         or origem.stat().st_nlink != 1 or link_inseguro(geral)
                         or sha(origem) != digest or sha(copia) != digest

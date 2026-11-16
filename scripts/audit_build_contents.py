@@ -60,6 +60,7 @@ def main():
     parser.add_argument('output', type=Path)
     parser.add_argument('--distribution', type=Path)
     parser.add_argument('--require-colorama', action='store_true')
+    parser.add_argument('--require-rede', action='store_true')
     args = parser.parse_args()
     result = inventory_pyinstaller(args.input) if args.format == 'pyinstaller' else inventory_nuitka(args.input)
     names = result['modules'] + result.get('archive_entries', []) + result.get('base_library', []) + result.get('data_files', [])
@@ -79,6 +80,8 @@ def main():
         raise ValueError('Inventory did not contain expected application and OFX modules')
     if args.require_colorama and not any(name == 'colorama' or name.startswith('colorama.') for name in result['modules']):
         raise ValueError('Colorama is missing from the packaged modules')
+    if args.require_rede and 'controller.rede_csv' not in result['modules']:
+        raise ValueError('Rede CSV converter is missing from packaged modules')
     bad = sorted(set(name for name in names if forbidden(name)) | set(result.get('project_test_or_tool_sources', [])))
     result['project_test_or_tool_entries'] = bad
     result['notable_modules'] = sorted(name for name in result['modules'] if name.split('.')[0] in ('unittest', 'pytest', 'PIL', 'pefile', 'ofxtools', 'controller'))
