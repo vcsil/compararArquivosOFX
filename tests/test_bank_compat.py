@@ -207,7 +207,7 @@ class ZipPrivado(unittest.TestCase):
         spec=importlib.util.spec_from_file_location('private_audit',path);module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)
-            for name in ('../escape', '/absolute', 'C:/escape'):
+            for name in ('../escape', '/absolute', 'C:/escape', '.. /escape', 'folder./escape', 'CON.txt', 'LPT1', 'tab\tname'):
                 with zipfile.ZipFile(root/'bad.zip','w') as z:z.writestr(name,b'bad')
                 with self.assertRaises(ValueError):module.extrair_seguro(root/'bad.zip',root/'out')
             with zipfile.ZipFile(root/'bad.zip','w') as z:

@@ -37,11 +37,13 @@ def extrair_seguro(arquivo, destino):
         if len(entries) > 5000 or sum(e.file_size for e in entries) > 300 * 1024**2:
             raise ValueError('ZIP excede limites da auditoria')
         vistos = set()
+        reservados = {'CON', 'PRN', 'AUX', 'NUL'} | {f'{base}{n}' for base in ('COM','LPT') for n in range(1,10)}
         for e in entries:
             p = PurePosixPath(e.filename.replace('\\', '/'))
             mode = stat.S_IFMT(e.external_attr >> 16)
             if (p.is_absolute() or not p.parts or '..' in p.parts
-                    or any(':' in x for x in p.parts) or e.flag_bits & 1
+                    or any(':' in x or x.endswith(('.', ' ')) or any(ord(c) < 32 for c in x)
+                           or x.split('.')[0].upper() in reservados for x in p.parts) or e.flag_bits & 1
                     or mode not in (0, stat.S_IFREG, stat.S_IFDIR)
                     or p.as_posix().casefold() in vistos
                     or e.file_size > 50 * 1024**2
