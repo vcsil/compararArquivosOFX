@@ -182,7 +182,7 @@ class Compatibilidade(unittest.TestCase):
     def test_onedrive_nome_nao_substitui_verificacao_de_capacidades(self):
         with patch.dict(os.environ, {'OneDrive': str(self.root)}):
             with ss.bloquear(self.bank) as token:
-                self.assertTrue(ss.bloqueio_valido(token, self.bank))
+                self.assertTrue(ss.bloqueio_valido(token, self.bank.resolve()))
     def test_lock_concorrente_entre_processos_e_preexistente(self):
         # O filho mantém o lock até receber uma linha, sem depender de sleeps.
         code="""import sys

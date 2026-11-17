@@ -85,7 +85,7 @@ with bloquear(Path(sys.argv[1])):
                         self.fail('segunda instância adquiriu bloqueio')
                 child.kill(); child.communicate(timeout=15)
                 with ss.bloquear(banco) as token:
-                    self.assertTrue(ss.bloqueio_valido(token, banco))
+                    self.assertTrue(ss.bloqueio_valido(token, banco.resolve()))
                     with self.assertRaises(OrganizacaoError):
                         with ss.bloquear(banco):
                             pass
@@ -100,8 +100,10 @@ with bloquear(Path(sys.argv[1])):
         from controller.ofx_functions import carregar_ofx
         real_stat = Path.stat
         def zero(path, *args, **kwargs):
-            values = list(real_stat(path, *args, **kwargs)); values[3] = 0
-            return os.stat_result(values)
+            original = real_stat(path, *args, **kwargs)
+            values = {name: getattr(original, name) for name in dir(original) if name.startswith('st_')}
+            values['st_nlink'] = 0
+            return SimpleNamespace(**values)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); bank = root / 'Banco'; bank.mkdir()
             source = root / 'entrada.ofx'

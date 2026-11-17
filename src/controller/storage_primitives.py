@@ -47,5 +47,3 @@ def publicar_arquivo(temp, destino, substituir):
             os.link(temp, destino)
             os.unlink(temp)
     fsync_dir(Path(destino).parent)
-
-
