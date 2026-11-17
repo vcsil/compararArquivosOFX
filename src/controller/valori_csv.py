@@ -1,0 +1,468 @@
+"""Recebimentos pagos Valori: conversão em memória, sem inferir conta bancária."""
+
+import csv
+import hashlib
+import io
+import json
+import re
+import unicodedata
+from datetime import datetime, timezone
+from types import SimpleNamespace
+from decimal import Decimal, InvalidOperation
+from pathlib import Path
+import xml.etree.ElementTree as ET
+from .csv_formats import VALORI_CAMPOS, decodificar
+from .rede_csv import normalizar
+from .ofx_io import interpretar_ofx
+from .ofx_comparison import (
+    identificar_conta,
+    _validar_transacoes,
+    _totais,
+    Relatorio,
+    Resultado,
+)
+from .organization import OrganizacaoError
+
+PREFIXO_META = "VALORI:1 "
+MODALIDADES = {"credito a vista": "Crédito à Vista", "debito": "Débito", "pix": "Pix"}
+BANKID = "000"  # Conta virtual do livro de liquidações, não um código bancário real.
+
+
+def identidade_loja(loja):
+    # Não remover acentos, alterar caixa ou inferir equivalência entre lojas.
+    return (
+        "VLR"
+        + hashlib.sha256(
+            unicodedata.normalize("NFC", loja.strip()).encode("utf-8")
+        ).hexdigest()[:19]
+    )
+
+
+def _valor(texto, campo, linha, positivo=False):
+    s = texto.strip().removeprefix("R$").strip()
+    if not re.fullmatch(r"(?:\d{1,3}(?:\.\d{3})+|\d+)(?:,\d{1,2})?", s):
+        raise ValueError(f"CSV Valori linha {linha}: {campo} inválido")
+    try:
+        value = Decimal(s.replace(".", "").replace(",", "."))
+        if not value.is_finite() or (positivo and value <= 0):
+            raise ValueError
+        return value
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError(f"CSV Valori linha {linha}: {campo} inválido") from exc
+
+
+def _data(texto, hora=False):
+    try:
+        return datetime.strptime(texto, "%d/%m/%Y %H:%M:%S" if hora else "%d/%m/%Y")
+    except ValueError as exc:
+        raise ValueError("CSV Valori: data de venda ou pagamento inválida") from exc
+
+
+def ler_transacoes(path):
+    texto = decodificar(Path(path).read_bytes())
+    obrigatorios = {normalizar(c) for c in VALORI_CAMPOS}
+    delimitadores = []
+    for sep in (";", ",", "\t"):
+        try:
+            names = [
+                normalizar(c)
+                for c in next(
+                    csv.reader(
+                        io.StringIO(texto, newline=""), delimiter=sep, strict=True
+                    )
+                )
+            ]
+            if obrigatorios <= set(names) and len(names) == len(set(names)):
+                delimitadores.append(sep)
+        except (StopIteration, csv.Error):
+            continue
+    if len(delimitadores) != 1:
+        raise ValueError("CSV Valori: cabeçalho ausente, duplicado ou incompatível")
+    reader = csv.DictReader(
+        io.StringIO(texto, newline=""), delimiter=delimitadores[0], strict=True
+    )
+    txs = []
+    lojas = set()
+    nsus = set()
+    pixids = set()
+    try:
+        for row in reader:
+            n = reader.line_num
+            if None in row or any(v is None for v in row.values()):
+                raise ValueError(
+                    f"CSV Valori linha {n}: colunas incompletas ou excedentes"
+                )
+            row = {normalizar(k): v.strip() for k, v in row.items()}
+            if not any(row.values()):
+                continue
+            if any(re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", v) for v in row.values()):
+                raise ValueError(f"CSV Valori linha {n}: caractere inválido")
+
+            def get(k, required=True):
+                v = row[normalizar(k)]
+                if required and not v:
+                    raise ValueError(
+                        f"CSV Valori linha {n}: campo obrigatório vazio: {k}"
+                    )
+                return v
+
+            if normalizar(get("Status")) != "pago":
+                raise ValueError(
+                    "CSV Valori: status pendente, cancelado, estornado ou desconhecido; arquivo inteiro bloqueado"
+                )
+            loja = unicodedata.normalize("NFC", get("Loja"))
+            lojas.add(loja)
+            if len(lojas) != 1:
+                raise ValueError("CSV Valori mistura lojas; separe os relatórios")
+            venda = _data(get("Data de transação"), hora=True)
+            pagamento = _data(get("Data de pagamento"))
+            if pagamento.date() < venda.date():
+                raise ValueError("CSV Valori: pagamento anterior à venda")
+            modalidade = normalizar(get("Tipo compra"))
+            if modalidade not in MODALIDADES:
+                raise ValueError("CSV Valori: modalidade não homologada")
+            if get("Parcelas") != "1":
+                raise ValueError(
+                    "CSV Valori: parcelamento sem identificação da parcela não é suportado"
+                )
+            liquido = _valor(get("Valor líquido"), "valor líquido", n, True)
+            bruto = _valor(get("Valor parcela bruto"), "valor parcela bruto", n, True)
+            total = _valor(get("Valor total bruto"), "valor total bruto", n, True)
+            tarifa = _valor(get("Valor tarifa"), "tarifa", n)
+            split = _valor(get("Valor split"), "split", n)
+            if tarifa != 0 or split != 0:
+                raise ValueError(
+                    "CSV Valori: tarifa/split não zero exige contrato financeiro confirmado"
+                )
+            if total != bruto or liquido > bruto:
+                raise ValueError(
+                    "CSV Valori: relação bruto/parcela/líquido não homologada"
+                )
+            taxa = get("Taxa Adm")
+            if not re.fullmatch(r"\d+(?:,\d+)?", taxa):
+                raise ValueError(
+                    "CSV Valori: Taxa Adm inválida; unidade não é inferida"
+                )
+            nsu = get("NSU operação")
+            pix = get("Id do Pix", False)
+            if nsu in nsus or nsu.startswith("PIX:"):
+                raise ValueError(
+                    "CSV Valori: NSU duplicado ou reservado; identificador ambíguo"
+                )
+            nsus.add(nsu)
+            if modalidade == "pix":
+                if not pix or pix in pixids:
+                    raise ValueError("CSV Valori: Id do Pix ausente ou duplicado")
+                pixids.add(pix)
+                fitid = "PIX:" + pix
+            else:
+                if pix:
+                    raise ValueError(
+                        "CSV Valori: Id do Pix em modalidade de cartão é ambíguo"
+                    )
+                fitid = nsu
+            if len(fitid) > 255:
+                raise ValueError("CSV Valori: identificador excede limite OFX")
+            meta = {
+                "loja": loja,
+                "nsu": nsu,
+                "pix": pix,
+                "venda": venda.isoformat(),
+                "pagamento": pagamento.date().isoformat(),
+                "modalidade": MODALIDADES[modalidade],
+                "autorizacao": get("Autorização", False),
+                "bandeira": get("Bandeira"),
+                "bruto": f"{bruto:.2f}",
+                "pos": get("POS", False),
+                "adquirente": get("Cod. acquirer", False),
+                "parcelas": get("Parcelas"),
+                "taxa_adm": taxa,
+                "tarifa": f"{tarifa:.2f}",
+                "split": f"{split:.2f}",
+            }
+            txs.append(
+                {
+                    "fitid": fitid,
+                    "valor": liquido,
+                    "data": pagamento.date(),
+                    "meta": meta,
+                }
+            )
+    except csv.Error as exc:
+        raise ValueError("CSV Valori malformado") from exc
+    if not txs:
+        raise ValueError("CSV Valori sem movimentações")
+    txs.sort(key=lambda t: (t["data"], t["fitid"]))
+    return txs
+
+
+def _sha(value):
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def metadados(t):
+    # Lista compacta: preserva a prova da origem sem ultrapassar MEMO(255).
+    # Descrições completas e dados opcionais ficam no CSV original arquivado.
+    meta = t["meta"]
+    origem = json.dumps(meta, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    modalidade = {"Crédito à Vista": "C", "Débito": "D", "Pix": "P"}[meta["modalidade"]]
+    return [
+        _sha(meta["loja"]),
+        _sha(meta["nsu"]),
+        _sha(origem),
+        meta["venda"],
+        modalidade,
+    ]
+
+
+def montar_modelo(txs):
+    _validar_transacoes(
+        [
+            SimpleNamespace(
+                fitid=t["fitid"],
+                dtposted=datetime.combine(t["data"], datetime.min.time(), timezone.utc),
+                trnamt=t["valor"],
+                trntype="CREDIT",
+            )
+            for t in txs
+        ],
+        "CSV Valori",
+    )
+
+    def sub(parent, tag, value=None):
+        node = ET.SubElement(parent, tag)
+        if value is not None:
+            node.text = str(value)
+        return node
+
+    root = ET.Element("OFX")
+    sonrs = sub(sub(root, "SIGNONMSGSRSV1"), "SONRS")
+    st = sub(sonrs, "STATUS")
+    sub(st, "CODE", 0)
+    sub(st, "SEVERITY", "INFO")
+    sub(sonrs, "DTSERVER", max(t["data"] for t in txs).strftime("%Y%m%d"))
+    sub(sonrs, "LANGUAGE", "POR")
+    fi = sub(sonrs, "FI")
+    sub(fi, "ORG", "VALORI")
+    sub(fi, "FID", "VALORI")
+    resp = sub(sub(root, "BANKMSGSRSV1"), "STMTTRNRS")
+    sub(
+        resp,
+        "TRNUID",
+        hashlib.sha256(
+            json.dumps(txs, default=str, sort_keys=True).encode()
+        ).hexdigest()[:32],
+    )
+    st = sub(resp, "STATUS")
+    sub(st, "CODE", 0)
+    sub(st, "SEVERITY", "INFO")
+    stmt = sub(resp, "STMTRS")
+    sub(stmt, "CURDEF", "BRL")
+    acct = sub(stmt, "BANKACCTFROM")
+    sub(acct, "BANKID", BANKID)
+    sub(acct, "ACCTID", identidade_loja(txs[0]["meta"]["loja"]))
+    sub(acct, "ACCTTYPE", "CHECKING")
+    period = sub(stmt, "BANKTRANLIST")
+    sub(period, "DTSTART", min(t["data"] for t in txs).strftime("%Y%m%d"))
+    sub(period, "DTEND", max(t["data"] for t in txs).strftime("%Y%m%d"))
+    for t in txs:
+        node = sub(period, "STMTTRN")
+        sub(node, "TRNTYPE", "CREDIT")
+        sub(node, "DTPOSTED", t["data"].strftime("%Y%m%d"))
+        sub(node, "TRNAMT", str(t["valor"]))
+        sub(node, "FITID", t["fitid"])
+        sub(node, "NAME", t["meta"]["modalidade"])
+        sub(
+            node, "MEMO", PREFIXO_META + json.dumps(metadados(t), separators=(",", ":"))
+        )
+    ledger = sub(stmt, "LEDGERBAL")
+    sub(ledger, "BALAMT", sum((t["valor"] for t in txs), Decimal("0")))
+    sub(ledger, "DTASOF", max(t["data"] for t in txs).strftime("%Y%m%d"))
+    return interpretar_ofx("xml", ET.tostring(root, encoding="utf-8"))
+
+
+def carregar_csv_valori(path):
+    return "CSV Valori convertido em memória", montar_modelo(ler_transacoes(path))
+
+
+def carregar_historico(path):
+    # Nunca alterar o leitor OFX global para adivinhar que CC significa CHECKING.
+    from .ofx_io import preparar_ofx
+    from ofxtools.Parser import TreeBuilder
+    from .ofx_functions import carregar_ofx
+
+    _, _, body = preparar_ofx(Path(path).read_bytes())
+    try:
+        tree = ET.fromstring(body)
+    except ET.ParseError:
+        builder = TreeBuilder()
+        builder.feed(body)
+        tree = builder.close()
+    if tree.findtext(".//BANKACCTFROM/ACCTTYPE") == "CC":
+        raise OrganizacaoError(
+            "Histórico Valori incompatível: ACCTTYPE CC e conta bancária não comprovada pelo CSV de loja; não mapear automaticamente para CHECKING nem ignorar o histórico"
+        )
+    return carregar_ofx(path)
+
+
+def _metas(model):
+    conta = identificar_conta(model)
+    if (conta.banco, conta.tipo, conta.moeda, conta.instituicao, conta.fid) != (
+        BANKID,
+        "CHECKING",
+        "BRL",
+        "VALORI",
+        "VALORI",
+    ):
+        raise ValueError("Histórico Valori não pertence ao livro de liquidações CSV")
+    if model.statements[0].bankacctfrom.branchid is not None:
+        raise ValueError("Agência bancária inesperada no livro Valori CSV")
+    result = {}
+    nsus = set()
+    pixs = set()
+    lojas = set()
+    for t in model.statements[0].transactions:
+        if not t.memo or not t.memo.startswith(PREFIXO_META):
+            raise ValueError("Histórico Valori sem metadados de origem verificáveis")
+        try:
+            meta = json.loads(t.memo[len(PREFIXO_META) :])
+            if (
+                not isinstance(meta, list)
+                or len(meta) != 5
+                or any(not isinstance(v, str) for v in meta)
+                or any(not re.fullmatch(r"[0-9a-f]{64}", v) for v in meta[:3])
+                or meta[4] not in ("C", "D", "P")
+            ):
+                raise ValueError("Metadados Valori inválidos")
+            loja, nsu, origem, venda, modalidade = meta
+            instante = datetime.strptime(venda, "%Y-%m-%dT%H:%M:%S")
+            if (
+                "VLR" + loja[:19] != conta.conta
+                or t.trntype != "CREDIT"
+                or t.trnamt <= 0
+                or instante.date() > t.dtposted.date()
+            ):
+                raise ValueError("Identidade financeira Valori incompatível")
+            lojas.add(loja)
+            pix = (
+                t.fitid[4:] if modalidade == "P" and t.fitid.startswith("PIX:") else ""
+            )
+            if (
+                nsu in nsus
+                or (pix and pix in pixs)
+                or len(lojas) > 1
+                or (modalidade == "P" and not pix)
+                or (
+                    modalidade != "P"
+                    and (t.fitid.startswith("PIX:") or _sha(t.fitid) != nsu)
+                )
+            ):
+                raise ValueError("Identificador Valori ambíguo no histórico")
+            nsus.add(nsu)
+            if pix:
+                pixs.add(pix)
+            result[t.fitid] = {
+                "loja": loja,
+                "nsu": nsu,
+                "pix": pix,
+                "origem": origem,
+                "venda": venda,
+                "modalidade": modalidade,
+            }
+        except (TypeError, KeyError) as exc:
+            raise ValueError("Metadados Valori incompletos") from exc
+    statement = model.statements[0]
+    txs = statement.transactions
+    if not txs:
+        raise ValueError("Histórico Valori vazio sem prova do estabelecimento")
+    if (
+        statement.ledgerbal is None
+        or statement.ledgerbal.balamt != sum((t.trnamt for t in txs), Decimal("0"))
+        or statement.banktranlist.dtstart != min(t.dtposted for t in txs)
+        or statement.banktranlist.dtend != max(t.dtposted for t in txs)
+        or statement.ledgerbal.dtasof != statement.banktranlist.dtend
+    ):
+        raise ValueError("Acumulador Valori com saldo derivado ou período divergente")
+    return result
+
+
+def analisar_lotes(atual, anterior=None):
+    r = Relatorio()
+    try:
+        r.conta = identificar_conta(atual)
+        tx = atual.statements[0].transactions
+        _validar_transacoes(tx, "CSV Valori")
+        meta = _metas(atual)
+        r.original = _totais(tx)
+        if anterior is None:
+            r.novas = r.original
+            r.estado = "PRIMEIRA_IMPORTACAO"
+            return Resultado(r, tuple(range(len(tx))))
+        if identificar_conta(anterior) != r.conta:
+            raise ValueError("Loja ou identidade financeira Valori incompatível")
+        oldtx = anterior.statements[0].transactions
+        oldids = _validar_transacoes(oldtx, "Histórico Valori")
+        oldmeta = _metas(anterior)
+        if {m["loja"] for m in meta.values()} != {m["loja"] for m in oldmeta.values()}:
+            raise ValueError("Identidade completa de loja Valori divergente")
+        oldnsu = {m["nsu"]: k for k, m in oldmeta.items()}
+        oldpix = {m["pix"]: k for k, m in oldmeta.items() if m["pix"]}
+        indices = []
+        dups = []
+        for i, t in enumerate(tx):
+            m = meta[t.fitid]
+            if (m["nsu"] in oldnsu and oldnsu[m["nsu"]] != t.fitid) or (
+                m["pix"] and m["pix"] in oldpix and oldpix[m["pix"]] != t.fitid
+            ):
+                raise ValueError("Identificador secundário Valori conflitante")
+            old = oldids.get(t.fitid)
+            if old is not None:
+                if (t.dtposted, t.trnamt, t.trntype) != (
+                    old.dtposted,
+                    old.trnamt,
+                    old.trntype,
+                ) or m != oldmeta[t.fitid]:
+                    raise ValueError("Conflito financeiro ou identidade ambígua Valori")
+                dups.append(t)
+            else:
+                indices.append(i)
+        r.anteriores = _totais(oldtx)
+        r.duplicatas = _totais(dups)
+        r.novas = _totais([tx[i] for i in indices])
+        r.estado = "APROVADO" if indices else "SEM_NOVIDADES"
+        return Resultado(r, tuple(indices))
+    except (ValueError, AttributeError, TypeError, KeyError, ArithmeticError) as exc:
+        r.motivo = str(exc)
+        return Resultado(r)
+
+
+def _atualizar_acumulador(model):
+    statement = model.statements[0]
+    _validar_transacoes(statement.transactions, "Acumulador Valori")
+    statement.transactions.sort(key=lambda t: (t.dtposted, t.fitid))
+    statement.banktranlist.dtstart = min(t.dtposted for t in statement.transactions)
+    statement.banktranlist.dtend = max(t.dtposted for t in statement.transactions)
+    statement.ledgerbal.dtasof = statement.banktranlist.dtend
+    statement.ledgerbal.balamt = sum(
+        (t.trnamt for t in statement.transactions), Decimal("0")
+    )
+
+
+def consolidar_historicos(modelos):
+    from .ofx_io import serializar_ofx
+
+    if not modelos:
+        return None
+    result = interpretar_ofx("xml", serializar_ofx(modelos[0]))
+    validation = analisar_lotes(result)
+    if validation.relatorio.estado == "BLOQUEADO":
+        raise OrganizacaoError(validation.relatorio.motivo)
+    for model in modelos[1:]:
+        r = analisar_lotes(model, result)
+        if r.relatorio.estado == "BLOQUEADO":
+            raise OrganizacaoError(r.relatorio.motivo)
+        result.statements[0].transactions.extend(
+            r.modelo_filtrado(model).statements[0].transactions
+        )
+        _atualizar_acumulador(result)
+    return result

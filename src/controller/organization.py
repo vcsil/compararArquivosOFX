@@ -7,7 +7,7 @@ import stat
 import sys
 
 TECNICOS = {'.git', '.github', '.venv', 'venv', 'env', 'src', 'tests', 'docs', 'build', 'dist', '__pycache__', 'node_modules', '.agents', '.codex', 'shared', 'attachments'}
-ANEXOS = {'.pdf', '.png', '.jpg', '.jpeg', '.tif', '.tiff', '.csv', '.xlsx', '.docx'}
+ANEXOS = {'.pdf', '.png', '.jpg', '.jpeg', '.tif', '.tiff', '.csv', '.xlsx', '.xls', '.html', '.htm', '.docx'}
 MESES = ('Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez')
 
 class OrganizacaoError(ValueError):
@@ -71,8 +71,54 @@ def extratos(raiz):
                    and not p.name.startswith(('~', '.'))), key=lambda p: (p.name.casefold(), p.name))
 
 
+def csvs_extrato(raiz):
+    from .csv_formats import identificar_csv, formato_permitido
+    bancos = instituicoes(raiz)
+    result = []
+    for p in raiz.iterdir():
+        if not _regular(p) or p.suffix.casefold() != '.csv' or p.name.startswith(('~', '.')):
+            continue
+        try:
+            formato = identificar_csv(p)
+        except (ValueError, OSError):
+            continue
+        if any(formato_permitido(b, formato) for b in bancos):
+            result.append(p)
+    return sorted(result, key=lambda p: (p.name.casefold(), p.name))
+
+
+def csvs_rede(raiz):
+    # API anterior preservada, agora filtrando o conteúdo de fato.
+    from .csv_formats import identificar_csv
+    return [p for p in csvs_extrato(raiz) if identificar_csv(p) == 'rede']
+
+
+def extrato_permitido(banco, arquivo):
+    from .csv_formats import identificar_csv, formato_permitido
+    path = Path(arquivo)
+    if path.suffix.casefold() == '.ofx':
+        return True
+    try:
+        return path.suffix.casefold() == '.csv' and formato_permitido(banco, identificar_csv(path))
+    except (OSError, ValueError):
+        return False
+
+
+def csv_rede_identificado(path):
+    from .csv_formats import identificar_csv
+    try:
+        return identificar_csv(path) == 'rede'
+    except (ValueError, OSError):
+        return False
+
+
+def csv_bancario_identificado(path):
+    from .csv_formats import csv_bancario
+    return csv_bancario(path)
+
+
 def anexos(raiz):
-    return sorted((p for p in raiz.iterdir() if _regular(p) and p.suffix.casefold() in ANEXOS
+    return sorted((p for p in raiz.iterdir() if _regular(p) and p.suffix.casefold() in ANEXOS and not csv_bancario_identificado(p)
                    and not p.name.startswith(('~', '.'))), key=lambda p: (p.name.casefold(), p.name))
 
 
@@ -83,63 +129,104 @@ def pasta_dia(banco, hoje):
 def proxima_importacao(dia):
     if not dia.exists():
         return dia / '001'
-    nums = [int(p.name) for p in dia.iterdir() if not link_inseguro(p) and p.is_dir() and re.fullmatch(r'\d{3}', p.name)]
+    nums = [int(p.name) for p in dia.iterdir() if not link_inseguro(p) and p.is_dir() and re.fullmatch(r'(?:\d{2}|\d{3})', p.name)]
     numero = max(nums, default=0) + 1
     if numero > 999:
         raise OrganizacaoError('Limite de 999 importações por dia atingido')
     return dia / f'{numero:03d}'
 
 
-def localizar_historico(banco, hoje):
-    """Exige estrutura íntegra; nunca segue links nem ignora importação órfã."""
+MESES_EXTENSO = ('Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+                  'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro')
+
+
+def data_diretorio_historico(banco, diretorio):
+    """Reconhece somente convenções comprovadas, sem mover nem renomear dados."""
+    parts = Path(diretorio).relative_to(banco).parts
+    try:
+        dia = date.fromisoformat(parts[-1])
+    except (ValueError, IndexError) as exc:
+        raise OrganizacaoError('Histórico legado: pasta diária inválida') from exc
+    if parts[-1] != dia.isoformat() or len(parts) not in (2, 3):
+        raise OrganizacaoError('Histórico legado: hierarquia desconhecida')
+    if len(parts) == 3 and parts[0] != f'{dia.year:04d}':
+        raise OrganizacaoError('Histórico legado: ano inconsistente')
+    month = parts[-2]
+    atual = f'{dia.month:02d} - {MESES[dia.month-1]} {dia.year:04d}'
+    antigo = f'{dia.month:02d} - {MESES_EXTENSO[dia.month-1]}'
+    if month != atual and not (len(parts) == 3 and month == antigo):
+        raise OrganizacaoError('Histórico legado: mês inconsistente ou desconhecido')
+    return dia
+
+
+def validar_historico_relativo(banco, rel):
+    rel = Path(rel)
+    if rel.is_absolute() or rel.drive or '..' in rel.parts or len(rel.parts) not in (3, 4):
+        raise OrganizacaoError('Histórico legado: caminho de referência inválido')
+    dia = data_diretorio_historico(banco, banco / rel.parent)
+    nomes = (f'OFXGeral-{dia.isoformat()}.ofx', f'Bradesco Geral - {dia.isoformat()}.ofx')
+    if rel.name.casefold() not in {n.casefold() for n in nomes}:
+        raise OrganizacaoError('Histórico legado: Geral ausente ou nome/data divergentes; exige conciliação manual')
+    return dia
+
+
+def historicos_validos(banco, hoje):
+    """Indexa Gerais modernos e legados; ambiguidades bloqueiam toda a seleção."""
+    banco = Path(banco)
     candidatos = []
     for base, dirs, files in os.walk(banco, followlinks=False, onerror=lambda e: (_ for _ in ()).throw(e)):
         root = Path(base)
         for name in dirs + files:
             if link_inseguro(root / name):
-                raise OrganizacaoError('Histórico contém link simbólico; verifique a instituição')
-        rel = root.relative_to(banco)
-        parts = rel.parts
+                raise OrganizacaoError('Histórico contém link ou ponto de reparse')
+        parts = root.relative_to(banco).parts
         if not parts:
             if '.comparaofx' in dirs:
                 dirs.remove('.comparaofx')
             if any(Path(f).suffix.casefold() == '.ofx' for f in files):
                 raise OrganizacaoError('OFX fora da estrutura esperada na instituição')
             continue
-        if len(parts) == 1:
-            if not re.fullmatch(r'\d{4}', parts[0]):
-                raise OrganizacaoError('Diretório inesperado na instituição: ' + parts[0])
-            if files:
-                raise OrganizacaoError('Arquivos fora da pasta diária de histórico')
-        elif len(parts) == 2:
-            month = re.fullmatch(r'(\d{2}) - ([A-Za-z]{3}) (\d{4})', parts[1])
-            if (not month or not 1 <= int(month.group(1)) <= 12
-                    or month.group(2) != MESES[int(month.group(1))-1]
-                    or month.group(3) != parts[0]):
-                raise OrganizacaoError('Pasta de mês inconsistente')
-            if files:
-                raise OrganizacaoError('Arquivos fora da pasta diária de histórico')
-        elif len(parts) == 3:
-            try:
-                dia = date.fromisoformat(parts[2])
-            except ValueError as exc:
-                raise OrganizacaoError('Data de histórico inválida') from exc
-            if parts[0] != f'{dia.year:04d}' or parts[1] != f'{dia.month:02d} - {MESES[dia.month-1]} {dia.year:04d}' or parts[2] != dia.isoformat():
-                raise OrganizacaoError('Hierarquia de histórico inconsistente')
-            oficial = f'OFXGeral-{dia.isoformat()}.ofx'
-            importacoes = [d for d in dirs if re.fullmatch(r'\d{3}', d)]
-            ofxs = [f for f in files if f.lower().endswith('.ofx')]
-            if any(d not in importacoes for d in dirs):
-                raise OrganizacaoError('Pasta inesperada no histórico diário')
-            if dia > hoje and (importacoes or ofxs):
-                raise OrganizacaoError('Histórico com data futura')
-            if oficial in files:
-                if not _regular(root / oficial):
-                    raise OrganizacaoError('Geral não é arquivo regular')
-                candidatos.append((dia, root / oficial))
-            elif importacoes or files:
-                raise OrganizacaoError('Evidências de importação sem OFX Geral oficial')
-            # Não percorrer arquivos das importações para selecionar o histórico.
-            dirs[:] = []
-    candidatos.sort(key=lambda item: item[0], reverse=True)
-    return candidatos[0][1] if candidatos else None
+        # Pais de pastas diárias reconhecidas não podem conter arquivos soltos.
+        if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', parts[-1]):
+            if files or len(parts) > 2:
+                raise OrganizacaoError('Histórico legado: arquivos ou diretórios fora da estrutura reconhecida')
+            if len(parts) == 1 and re.fullmatch(r'\d{4}', parts[0]):
+                continue
+            month = parts[-1]
+            match = re.fullmatch(r'(\d{2}) - ([A-Za-zÀ-ÿ]{3}) (\d{4})', month)
+            moderno = bool(match and 1 <= int(match[1]) <= 12
+                           and match[2] == MESES[int(match[1])-1] and int(match[3]) > 0
+                           and (len(parts) == 1 or match[3] == parts[0]))
+            antigo = len(parts) == 2 and month in {f'{i+1:02d} - {m}' for i,m in enumerate(MESES_EXTENSO)}
+            if not (moderno or antigo):
+                raise OrganizacaoError('Histórico legado: diretório desconhecido')
+            continue
+        dia = data_diretorio_historico(banco, root)
+        importacoes = [d for d in dirs if re.fullmatch(r'(?:0[1-9]|[1-9]\d|00[1-9]|0[1-9]\d|[1-9]\d{2})', d)]
+        if len(importacoes) != len(dirs):
+            raise OrganizacaoError('Pasta inesperada no histórico diário')
+        # Não seguir links ocultos dentro de arquivos históricos de importação.
+        for imp in importacoes:
+            for child in (root / imp).iterdir():
+                if link_inseguro(child) or not child.is_file():
+                    raise OrganizacaoError('Arquivo histórico de importação inseguro')
+        if dia > hoje and (importacoes or files):
+            raise OrganizacaoError('Histórico com data futura')
+        gerais = []
+        for name in files:
+            if name.casefold().startswith(('ofxgeral-', 'bradesco geral - ')) and name.lower().endswith('.ofx'):
+                validar_historico_relativo(banco, (root / name).relative_to(banco))
+                gerais.append(root / name)
+        if len(gerais) != 1 and (importacoes or files):
+            raise OrganizacaoError('Histórico legado: Geral ausente ou ambíguo; exige conciliação manual')
+        if gerais:
+            candidatos.append((dia, gerais[0]))
+        dirs[:] = []
+    if len({d for d,p in candidatos}) != len(candidatos):
+        raise OrganizacaoError('Histórico legado: mais de um Geral para a mesma data')
+    return sorted(candidatos, key=lambda item: item[0])
+
+
+def localizar_historico(banco, hoje):
+    candidatos = historicos_validos(banco, hoje)
+    return candidatos[-1][1] if candidatos else None

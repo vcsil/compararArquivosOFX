@@ -9,7 +9,7 @@ import threading
 import uuid
 from datetime import date
 
-from .organization import OrganizacaoError, link_inseguro
+from .organization import OrganizacaoError, link_inseguro, validar_historico_relativo
 from .ofx_names import nome_limpo_manifesto
 
 
@@ -28,12 +28,47 @@ def bloqueio_valido(token, banco):
             and registro is not None and registro == (token, os.getpid(), threading.get_ident()))
 
 
+def _verificar_pasta_sincronizada(banco):
+    # Locks locais não constituem um protocolo entre dispositivos OneDrive.
+    for key in ('OneDrive', 'OneDriveConsumer', 'OneDriveCommercial'):
+        value = os.environ.get(key)
+        if value and banco.is_relative_to(Path(value).resolve()):
+            raise OrganizacaoError('Bloqueio do sistema de arquivos: pasta OneDrive identificada; trabalhe em cópia local fora da sincronização. Exclusão entre dispositivos não é garantida')
+
+
+def _verificar_volume_windows(banco):
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    volume = ctypes.create_unicode_buffer(1024)
+    getpath = kernel.GetVolumePathNameW
+    getpath.argtypes = (wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD)
+    getpath.restype = wintypes.BOOL
+    if not getpath(str(banco), volume, len(volume)):
+        raise OrganizacaoError('Bloqueio do sistema de arquivos: volume não verificável')
+    drive = kernel.GetDriveTypeW
+    drive.argtypes = (wintypes.LPCWSTR,); drive.restype = wintypes.UINT
+    fs = ctypes.create_unicode_buffer(128)
+    info = kernel.GetVolumeInformationW
+    info.argtypes = (wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD,
+                     ctypes.POINTER(wintypes.DWORD), ctypes.POINTER(wintypes.DWORD),
+                     ctypes.POINTER(wintypes.DWORD), wintypes.LPWSTR, wintypes.DWORD)
+    info.restype = wintypes.BOOL
+    if not info(volume.value, None, 0, None, None, None, fs, len(fs)):
+        raise OrganizacaoError('Bloqueio do sistema de arquivos: tipo do volume não verificável')
+    if drive(volume.value) != 3 or fs.value.upper() not in ('NTFS', 'REFS'):
+        raise OrganizacaoError('Bloqueio do sistema de arquivos: use volume local NTFS/ReFS fora de Drive virtual ou rede; exclusão entre dispositivos não homologada')
+
+
 @contextlib.contextmanager
 def bloquear(banco):
     banco = Path(banco).absolute()
     if link_inseguro(banco) or link_inseguro(banco.parent) or not banco.is_dir():
         raise OrganizacaoError('Instituição inválida para bloqueio')
     banco = banco.resolve(strict=True)
+    _verificar_pasta_sincronizada(banco)
+    if sys.platform == 'win32':
+        _verificar_volume_windows(banco)
     locks = banco.parent / '.comparaofx-locks'
     if link_inseguro(locks):
         raise OrganizacaoError('Pasta de bloqueios insegura')
@@ -46,8 +81,11 @@ def bloquear(banco):
         flags |= os.O_NOFOLLOW
     fd = os.open(lockpath, flags, 0o600)
     try:
-        if os.fstat(fd).st_nlink != 1:
-            raise OrganizacaoError('Arquivo de bloqueio com links adicionais')
+        links = os.fstat(fd).st_nlink
+        if links > 1:
+            raise OrganizacaoError('Bloqueio do sistema de arquivos: lock possui hardlinks adicionais; processamento suspenso')
+        if links != 1:
+            raise OrganizacaoError('Bloqueio do sistema de arquivos: contagem de links não verificável. Use pasta local fora do Drive; sincronização entre dispositivos não garante exclusão mútua')
         f = os.fdopen(fd, 'r+b', buffering=0)
         fd = -1
         try:
@@ -91,10 +129,59 @@ def exigir_sem_pendencias(banco):
         raise OrganizacaoError('Operação pendente em .comparaofx; preserve os arquivos e faça inspeção antes de continuar')
 
 
+def _validar_csv_manifesto(banco, manifesto, arquivo):
+    from .csv_formats import identificar_csv, formato_permitido
+    formato = manifesto.get('formato_csv')
+    if arquivo.suffix.casefold() != '.csv':
+        if formato is not None:
+            raise ValueError('Descritor CSV associado a OFX')
+        return
+    identificado = identificar_csv(arquivo)
+    if not formato_permitido(banco, identificado):
+        raise ValueError('CSV não corresponde à instituição na recuperação')
+    if formato is not None and formato != identificado:
+        raise ValueError('Descritor CSV diverge do conteúdo')
+    if identificado == 'valori' and formato != 'valori':
+        raise ValueError('CSV Valori exige descritor explícito no manifesto')
+
+
+def _verificar_referencias(banco, manifesto):
+    """Verifica referências CSV sem mudar manifestos v1/v2 anteriores."""
+    from .organization import pasta_dia
+    refs_rede = manifesto.get('referencias_rede', [])
+    refs_csv = manifesto.get('referencias_csv', [])
+    if not isinstance(refs_rede, list) or not isinstance(refs_csv, list):
+        raise ValueError('Referências CSV inválidas')
+    if refs_rede and banco.name.casefold() != 'rede':
+        raise ValueError('Referências Rede fora da instituição')
+    formato = manifesto.get('formato_csv')
+    if refs_csv or formato is not None:
+        from .csv_formats import formato_permitido
+        if not formato_permitido(banco, formato):
+            raise ValueError('Formato CSV não autorizado para a instituição')
+    refs = refs_rede + refs_csv
+    for item in refs:
+        rel = Path(item['nome'])
+        if rel.is_absolute() or rel.drive or '..' in rel.parts or '\\' in item['nome']:
+            raise ValueError('Caminho de referência inválido')
+        if not (rel == Path('.rede.json') and banco.name.casefold() == 'rede'):
+            validar_historico_relativo(banco, rel)
+        path = banco / rel
+        for parent in (path, *path.parents):
+            if parent == banco.parent:
+                break
+            if link_inseguro(parent):
+                raise ValueError('Referência insegura')
+        if not path.is_file() or path.stat().st_nlink != 1:
+            raise ValueError('Referência ausente ou com múltiplos links')
+        if hashlib.sha256(path.read_bytes()).hexdigest() != item['sha256']:
+            raise ValueError('Referência CSV alterada')
+
+
 def _limpar_preparacao(banco, op, m):
     """Remove apenas preparação própria quando ainda não houve publicação."""
     import re
-    from .organization import ANEXOS, pasta_dia
+    from .organization import ANEXOS, pasta_dia, extrato_permitido, csv_bancario_identificado
     if not re.fullmatch(r'[0-9a-f]{32}', op.name):
         raise ValueError('identificador de operação inválido')
     pasta, geral = Path(m['pasta']), Path(m['geral'])
@@ -114,11 +201,7 @@ def _limpar_preparacao(banco, op, m):
     historico = None
     if historico_rel is not None:
         rel = Path(historico_rel)
-        if rel.is_absolute() or rel.drive or '..' in rel.parts or len(rel.parts) != 4:
-            raise ValueError('histórico inválido')
-        hd = date.fromisoformat(rel.parent.name)
-        if pasta_dia(banco, hd).relative_to(banco) != rel.parent or rel.name != f'OFXGeral-{hd.isoformat()}.ofx':
-            raise ValueError('histórico inválido')
+        validar_historico_relativo(banco, rel)
         historico = banco / rel
         for path in (historico, *historico.parents):
             if path == banco.parent: break
@@ -141,9 +224,14 @@ def _limpar_preparacao(banco, op, m):
             raise ValueError('nome inválido')
         nomes.add(nome.casefold())
         hashes_esperados[nome.casefold()] = item['sha256']
-        if (i == 0 and Path(nome).suffix.casefold() != '.ofx') or (i > 0 and Path(nome).suffix.casefold() not in ANEXOS):
+        origem = banco.parent / nome
+        if link_inseguro(origem) or not origem.is_file() or origem.stat().st_nlink != 1:
+            raise ValueError('origem insegura')
+        if (i == 0 and not extrato_permitido(banco, banco.parent / nome)) or (i > 0 and (Path(nome).suffix.casefold() not in ANEXOS or csv_bancario_identificado(banco.parent / nome))):
             raise ValueError('tipo inválido')
+    _validar_csv_manifesto(banco, m, banco.parent / arquivos[0]['nome'])
     def verificar():
+        _verificar_referencias(banco, m)
         for path in (banco, banco / '.comparaofx', op, op / 'pasta', *pasta.parents):
             if path == banco.parent: break
             if link_inseguro(path): raise ValueError('link inseguro durante limpeza')
@@ -252,12 +340,7 @@ def recuperar_concluida(banco, *, bloqueio=None):
             referencia = None
             if m.get('historico'):
                 historico_rel = Path(m['historico'])
-                if historico_rel.is_absolute() or historico_rel.drive or '..' in historico_rel.parts or len(historico_rel.parts) != 4:
-                    raise ValueError('caminho do histórico inválido')
-                historico_data = date.fromisoformat(historico_rel.parent.name)
-                if (pasta_dia(banco, historico_data).relative_to(banco) != historico_rel.parent
-                        or historico_rel.name != f'OFXGeral-{historico_data.isoformat()}.ofx'):
-                    raise ValueError('hierarquia do histórico inválida')
+                validar_historico_relativo(banco, historico_rel)
                 historico = banco / historico_rel
                 if historico != geral:
                     referencia = historico
@@ -266,12 +349,13 @@ def recuperar_concluida(banco, *, bloqueio=None):
                         if link_inseguro(path): raise ValueError('histórico inseguro')
                     if sha(historico) != m['historico_hash']:
                         raise ValueError('histórico de referência alterado')
+            _verificar_referencias(banco, m)
             arquivos = m['arquivos']
             if not isinstance(arquivos, list) or not arquivos:
                 raise ValueError('lista de arquivos inválida')
             origens = []
             vistos = set()
-            from .organization import ANEXOS
+            from .organization import ANEXOS, extrato_permitido, csv_bancario_identificado
             for idx, item in enumerate(arquivos):
                 nome = item['nome']
                 if not isinstance(nome, str) or nome in ('', '.', '..') or Path(nome).name != nome or '\\' in nome:
@@ -279,11 +363,13 @@ def recuperar_concluida(banco, *, bloqueio=None):
                 if nome.casefold() in vistos or nome.casefold() == limpo_nome.casefold():
                     raise ValueError('nomes duplicados')
                 vistos.add(nome.casefold())
-                if (idx == 0 and Path(nome).suffix.casefold() != '.ofx') or (idx > 0 and Path(nome).suffix.casefold() not in ANEXOS):
-                    raise ValueError('tipo de arquivo inválido')
                 origem, copia = banco.parent / nome, pasta / nome
-                if link_inseguro(origem) or link_inseguro(copia) or sha(copia) != item['sha256']:
+                if link_inseguro(origem) or link_inseguro(copia) or not copia.is_file() or copia.stat().st_nlink != 1 or sha(copia) != item['sha256']:
                     raise ValueError('cópia divergente')
+                if (idx == 0 and not extrato_permitido(banco, pasta / nome)) or (idx > 0 and (Path(nome).suffix.casefold() not in ANEXOS or csv_bancario_identificado(pasta / nome))):
+                    raise ValueError('tipo de arquivo inválido')
+                if idx == 0:
+                    _validar_csv_manifesto(banco, m, pasta / nome)
                 if origem.exists():
                     if not origem.is_file() or origem.stat().st_nlink != 1 or sha(origem) != item['sha256']:
                         raise ValueError('origem divergente')
@@ -291,6 +377,7 @@ def recuperar_concluida(banco, *, bloqueio=None):
             # Todos os dados e a ausência de alterações são verificados antes de
             # cada remoção. O manifesto persiste mesmo após uma remoção parcial.
             for origem, copia, digest in origens:
+                _verificar_referencias(banco, m)
                 if (link_inseguro(origem) or link_inseguro(copia)
                         or origem.stat().st_nlink != 1 or link_inseguro(geral)
                         or sha(origem) != digest or sha(copia) != digest

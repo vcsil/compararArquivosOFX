@@ -13,7 +13,7 @@ def main(raiz=None, entrada=None, saida=None):
     tela = Terminal(saida)
     try:
         raiz = raiz_aplicacao(raiz)
-        tela.texto('COMPARAOFX 2.0', 'titulo')
+        tela.texto('COMPARAOFX 2.1 (CANDIDATA)', 'titulo')
         tela.texto('----------------------------', 'cabecalho')
         from controller.safe_storage import pendencias, bloquear, recuperar_concluida
         from controller.organization import OrganizacaoError
@@ -37,7 +37,10 @@ def main(raiz=None, entrada=None, saida=None):
 
         def ler(caminho):
             try:
-                return carregar_ofx(caminho)
+                cabecalho, modelo = carregar_ofx(caminho)
+                for aviso in getattr(modelo, '_normalizacoes', ()):
+                    tela.texto('Compatibilidade OFX: ' + aviso, 'aviso')
+                return cabecalho, modelo
             except OFXEncodingAmbiguaError:
                 tela.texto(f'Codificação ambígua em {caminho.name}: declarado Windows-1252, também válido em UTF-8.', 'aviso')
                 while True:
@@ -67,7 +70,15 @@ def main(raiz=None, entrada=None, saida=None):
         if os.environ.get('COMPARAOFX_DEBUG') == '1':
             import traceback
             traceback.print_exc()
-        tela.texto(f'Operação interrompida: {exc}', 'erro')
+        from controller.organization import OrganizacaoError
+        from controller.ofx_compat import OFXCompatError
+        if isinstance(exc, (OrganizacaoError, OFXCompatError)):
+            mensagem = str(exc)
+        elif isinstance(exc, OSError):
+            mensagem = 'Sistema de arquivos: verifique permissões, bloqueios e disponibilidade dos arquivos; nada foi confirmado como concluído'
+        else:
+            mensagem = 'Extrato inválido: confira o formato e os campos obrigatórios; os arquivos foram preservados'
+        tela.texto('Operação interrompida: ' + mensagem, 'erro')
         return 1
     except Exception:
         if os.environ.get('COMPARAOFX_DEBUG') == '1':

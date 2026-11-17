@@ -92,7 +92,7 @@ def _validar_transacoes(lista, nome):
         if not isinstance(fitid, str) or not fitid.strip():
             raise ValueError(f'{nome}: FITID ausente')
         if fitid in ids:
-            raise ValueError(f'{nome}: FITID repetido {fitid!r}')
+            raise ValueError(f'{nome}: FITID repetido; concilie o documento antes da importação')
         if not isinstance(dt, datetime) or dt.utcoffset() is None:
             raise ValueError(f'{nome}: data ausente ou sem fuso verificável')
         if not isinstance(amount, Decimal) or not amount.is_finite() or not kind:
