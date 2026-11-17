@@ -96,7 +96,7 @@ def verificar_capacidades(banco):
     O teste não prova persistência após queda de energia nem atomicidade de
     sincronização remota. Publicação usa rename, nunca cópia no nome definitivo.
     """
-    from .safe_storage import escrever, publicar_arquivo, publicar_pasta, atualizar_manifesto
+    from .storage_primitives import escrever, publicar_arquivo, publicar_pasta
     etapa = 'criação de diretório de diagnóstico'
     try:
         with tempfile.TemporaryDirectory(prefix='.comparaofx-probe-', dir=banco) as tmp:
@@ -143,8 +143,9 @@ def verificar_capacidades(banco):
             if (dst / 'arquivo').read_bytes() != data or not src.is_dir():
                 raise ValueError('renomeação alterou conteúdo')
             etapa = 'substituição e releitura de manifesto'
-            atualizar_manifesto(root, {'probe': 1})
-            atualizar_manifesto(root, {'probe': 2})
+            for value in (b'{"probe": 1}', b'{"probe": 2}'):
+                escrever(root / 'manifesto.tmp', value)
+                os.replace(root / 'manifesto.tmp', root / 'manifesto.json')
             import json
             if json.loads((root / 'manifesto.json').read_text(encoding='utf-8')) != {'probe': 2}:
                 raise ValueError('manifesto divergente')

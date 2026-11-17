@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from controller import storage_capabilities as caps, safe_storage as ss
+from controller import storage_capabilities as caps, safe_storage as ss, storage_primitives as primitives
 from controller.organization import OrganizacaoError, link_inseguro
 
 
@@ -18,9 +18,16 @@ class Capacidades(unittest.TestCase):
             caps.verificar_capacidades(Path(tmp))
             self.assertEqual(list(Path(tmp).iterdir()), [])
 
+    def test_preflight_independente_das_injecoes_de_interrupcao(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(ss, 'publicar_arquivo', side_effect=AssertionError('interrupcao do fluxo')), \
+             patch.object(ss, 'publicar_pasta', side_effect=AssertionError('interrupcao do fluxo')), \
+             patch.object(ss, 'escrever', side_effect=AssertionError('interrupcao do fluxo')):
+            caps.verificar_capacidades(Path(tmp))
+
     def test_falha_especifica_nao_libera_volume(self):
         with tempfile.TemporaryDirectory() as tmp:
-            with patch.object(ss, 'publicar_arquivo', side_effect=OSError('sem rename')):
+            with patch.object(primitives, 'publicar_arquivo', side_effect=OSError('sem rename')):
                 with self.assertRaisesRegex(OrganizacaoError, 'renomeação exclusiva'):
                     caps.verificar_capacidades(Path(tmp))
 
@@ -107,7 +114,6 @@ with bloquear(Path(sys.argv[1])):
                     source.write_bytes(raw)
                     plan = planejar(root, bank, source)
                     if attempt == 0:
-                        finish = ss.finalizar
                         with patch.object(ss, 'finalizar', side_effect=OSError('interrupcao')):
                             with self.assertRaises(OSError):
                                 executar(plan)
