@@ -32,8 +32,13 @@ def link_inseguro(path):
         info = path.lstat()
     except FileNotFoundError:
         return False
-    return (path.is_symlink() or bool(getattr(info, 'st_file_attributes', 0)
-                                     & getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0)))
+    reparse = bool(getattr(info, 'st_file_attributes', 0)
+                   & getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0))
+    # Cloud placeholders não redirecionam nomes. Junctions, symlinks e tags
+    # desconhecidas continuam recusados. A leitura hidrata o arquivo e é hasheada.
+    tag = getattr(info, 'st_reparse_tag', 0)
+    cloud = (tag & 0xFFFF0FFF) == 0x9000001A
+    return path.is_symlink() or (reparse and not cloud)
 
 
 def caminho_direto(raiz, caminho):

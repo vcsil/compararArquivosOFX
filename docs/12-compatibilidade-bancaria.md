@@ -75,30 +75,31 @@ CSV reconhecido como Rede continua sendo extrato, nunca anexo de outro banco.
 
 ## Armazenamento local, Drive e concorrência
 
-A correção não elimina a verificação de links e não transfere o lock para uma
-pasta local que seria invisível a outro computador. Lock com st_nlink maior que
-1 bloqueia por hardlinks; zero ou outro valor não verificável bloqueia com
-explicação de incompatibilidade do sistema de arquivos.
+O Windows verifica operações reais antes da importação, sem exigir DRIVE_FIXED,
+NTFS/ReFS ou rejeitar o nome do provedor. Isso permite avaliar pastas locais,
+espelhadas e unidades virtuais pelo mesmo critério. O teste cobre escrita exclusiva,
+flush, releitura, SHA-256, renomeação exclusiva de arquivo/pasta, recusa de destino
+ocupado, substituição autorizada e atualização de manifesto. Uma falha indica a
+operação exata. Ver [diagnóstico e limites](13-armazenamento-drive.md).
 
-No Windows, o volume deve ser local NTFS/ReFS e verificável pelas APIs do sistema.
-Pastas OneDrive identificadas pelas variáveis padrão são bloqueadas, assim como
-links e pontos de reparse. Drive virtual ou rede não homologados não recebem
-uma promessa de exclusão distribuída. Um espelho sincronizado em NTFS pode não
-ser identificável universalmente: **não use sincronização ativa como protocolo
-de concorrência entre dispositivos**, mesmo quando o lock local passar.
-Trabalhe em cópia local fora da sincronização e sincronize somente com o programa
-encerrado. Não há homologação de Google Drive/OneDrive real neste ambiente.
+O bloqueio Windows usa mutex global do kernel, independente do armazenamento virtual;
+no Linux continua com flock. Ambos são **locais à máquina**, sem exclusão distribuída.
+Não execute importações simultâneas em computadores distintos. Hashes detectam
+alterações nos pontos de revalidação, mas não eliminam a corrida entre uma verificação
+e uma alteração remota. Aguarde a sincronização terminar antes de importar.
 
-Diagnóstico reproduzível, sem extratos, em checkout de desenvolvimento Windows:
+Hardlinks reais continuam bloqueados. Contagem zero só é aceita quando as capacidades
+Windows declaram que o volume não suporta hardlinks. Capacidade desconhecida ou
+contagem ausente em volume que suporta hardlinks gera erro específico. Symlinks,
+junctions e tags reparse desconhecidas continuam recusados; placeholders CLOUD sem
+redirecionamento de nomes são aceitos e lidos integralmente para cálculo de hash.
+
+Não há homologação de Google Drive/OneDrive real neste ambiente Linux. O diagnóstico
+usa somente dados sintéticos em subpasta temporária no volume escolhido:
 
 ```powershell
-python scripts/probe_storage.py C:\PastaLocalDeTeste
-python scripts/probe_storage.py G:\PastaDeTesteDoDrive
+python scripts/probe_storage.py "G:\PastaDeTesteDoDrive"
 ```
-
-A ferramenta cria somente uma pasta temporária sintética, verifica o lock com
-dois processos e remove o teste. Um resultado local positivo não homologa
-exclusão entre dispositivos. Não crie exclusões de antivírus.
 
 ## Auditoria privada de documentos
 
@@ -126,7 +127,7 @@ ao CI, a comentários do PR ou a fixtures. No CI só entram dados inventados.
 Os testes sintéticos cobrem metadados, preservação financeira, roundtrip,
 conflitos em históricos legados, recuperação com referências antigas, anexos
 XLS/HTML (falhas na cópia e remoção), exclusão entre processos, lock preexistente,
-hardlink real, contagem de links não verificável e identificação de OneDrive.
+hardlink real, metadados ausentes e pastas identificadas como OneDrive sem veto por nome.
 As sete falhas históricas esperadas permanecem.
 
 Os três candidatos Windows executam o smoke financeiro, CSV e recuperação v1/v2,

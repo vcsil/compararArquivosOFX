@@ -166,6 +166,7 @@ class Compatibilidade(unittest.TestCase):
         src=self.root/'novo.ofx';raw=fixture([('20230102120000','21','2','Conflito')]);src.write_bytes(raw)
         with self.assertRaises(OrganizacaoError):planejar(self.root,self.bank,src,hoje=D)
         self.assertEqual(src.read_bytes(),raw);self.assertEqual(hist.read_bytes(),fixture([A]))
+    @unittest.skipIf(os.name == 'nt', 'Windows usa mutex do kernel, sem lock no volume')
     def test_lock_zero_links_falha_segura_e_hardlink_real_rejeitado(self):
         real=os.fstat
         def zero(fd):
@@ -178,11 +179,10 @@ class Compatibilidade(unittest.TestCase):
         lock=next((self.root/'.comparaofx-locks').iterdir());os.link(lock,self.root/'alias.lock')
         with self.assertRaisesRegex(OrganizacaoError,'hardlinks'):
             with ss.bloquear(self.bank):pass
-    def test_onedrive_identificado_bloqueia_sem_promessa_entre_dispositivos(self):
+    def test_onedrive_nome_nao_substitui_verificacao_de_capacidades(self):
         with patch.dict(os.environ, {'OneDrive': str(self.root)}):
-            with self.assertRaisesRegex(OrganizacaoError,'entre dispositivos'):
-                with ss.bloquear(self.bank):pass
-        self.assertFalse((self.root/'.comparaofx-locks').exists())
+            with ss.bloquear(self.bank) as token:
+                self.assertTrue(ss.bloqueio_valido(token, self.bank))
     def test_lock_concorrente_entre_processos_e_preexistente(self):
         # O filho mantém o lock até receber uma linha, sem depender de sleeps.
         code="""import sys

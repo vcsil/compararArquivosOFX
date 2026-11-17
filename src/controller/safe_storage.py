@@ -10,6 +10,7 @@ import uuid
 from datetime import date
 
 from .organization import OrganizacaoError, link_inseguro, validar_historico_relativo
+from .storage_capabilities import links_seguros
 from .ofx_names import nome_limpo_manifesto
 
 
@@ -28,36 +29,9 @@ def bloqueio_valido(token, banco):
             and registro is not None and registro == (token, os.getpid(), threading.get_ident()))
 
 
-def _verificar_pasta_sincronizada(banco):
-    # Locks locais não constituem um protocolo entre dispositivos OneDrive.
-    for key in ('OneDrive', 'OneDriveConsumer', 'OneDriveCommercial'):
-        value = os.environ.get(key)
-        if value and banco.is_relative_to(Path(value).resolve()):
-            raise OrganizacaoError('Bloqueio do sistema de arquivos: pasta OneDrive identificada; trabalhe em cópia local fora da sincronização. Exclusão entre dispositivos não é garantida')
-
-
 def _verificar_volume_windows(banco):
-    import ctypes
-    from ctypes import wintypes
-    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
-    volume = ctypes.create_unicode_buffer(1024)
-    getpath = kernel.GetVolumePathNameW
-    getpath.argtypes = (wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD)
-    getpath.restype = wintypes.BOOL
-    if not getpath(str(banco), volume, len(volume)):
-        raise OrganizacaoError('Bloqueio do sistema de arquivos: volume não verificável')
-    drive = kernel.GetDriveTypeW
-    drive.argtypes = (wintypes.LPCWSTR,); drive.restype = wintypes.UINT
-    fs = ctypes.create_unicode_buffer(128)
-    info = kernel.GetVolumeInformationW
-    info.argtypes = (wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD,
-                     ctypes.POINTER(wintypes.DWORD), ctypes.POINTER(wintypes.DWORD),
-                     ctypes.POINTER(wintypes.DWORD), wintypes.LPWSTR, wintypes.DWORD)
-    info.restype = wintypes.BOOL
-    if not info(volume.value, None, 0, None, None, None, fs, len(fs)):
-        raise OrganizacaoError('Bloqueio do sistema de arquivos: tipo do volume não verificável')
-    if drive(volume.value) != 3 or fs.value.upper() not in ('NTFS', 'REFS'):
-        raise OrganizacaoError('Bloqueio do sistema de arquivos: use volume local NTFS/ReFS fora de Drive virtual ou rede; exclusão entre dispositivos não homologada')
+    from .storage_capabilities import verificar_capacidades
+    verificar_capacidades(banco)
 
 
 @contextlib.contextmanager
@@ -66,9 +40,18 @@ def bloquear(banco):
     if link_inseguro(banco) or link_inseguro(banco.parent) or not banco.is_dir():
         raise OrganizacaoError('Instituição inválida para bloqueio')
     banco = banco.resolve(strict=True)
-    _verificar_pasta_sincronizada(banco)
     if sys.platform == 'win32':
-        _verificar_volume_windows(banco)
+        from .storage_capabilities import mutex_windows
+        with mutex_windows(banco):
+            _verificar_volume_windows(banco)
+            token = Bloqueio(banco)
+            _ativos[id(token)] = (token, os.getpid(), threading.get_ident())
+            try:
+                yield token
+            finally:
+                token.ativo = False
+                _ativos.pop(id(token), None)
+        return
     locks = banco.parent / '.comparaofx-locks'
     if link_inseguro(locks):
         raise OrganizacaoError('Pasta de bloqueios insegura')
@@ -85,21 +68,13 @@ def bloquear(banco):
         if links > 1:
             raise OrganizacaoError('Bloqueio do sistema de arquivos: lock possui hardlinks adicionais; processamento suspenso')
         if links != 1:
-            raise OrganizacaoError('Bloqueio do sistema de arquivos: contagem de links não verificável. Use pasta local fora do Drive; sincronização entre dispositivos não garante exclusão mútua')
+            raise OrganizacaoError('Bloqueio do sistema de arquivos: contagem de links não verificável. Não é possível comprovar a identidade do lock local')
         f = os.fdopen(fd, 'r+b', buffering=0)
         fd = -1
         try:
-            if sys.platform == 'win32':
-                import msvcrt
-                if os.fstat(f.fileno()).st_size == 0:
-                    f.write(b'0')
-                f.seek(0)
-                try: msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
-                except OSError as exc: raise OrganizacaoError('Instituição já está em processamento') from exc
-            else:
-                import fcntl
-                try: fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                except BlockingIOError as exc: raise OrganizacaoError('Instituição já está em processamento') from exc
+            import fcntl
+            try: fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc: raise OrganizacaoError('Instituição já está em processamento') from exc
             try:
                 token = Bloqueio(banco)
                 _ativos[id(token)] = (token, os.getpid(), threading.get_ident())
@@ -107,9 +82,7 @@ def bloquear(banco):
             finally:
                 token.ativo = False
                 _ativos.pop(id(token), None)
-                if sys.platform == 'win32':
-                    f.seek(0); msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
-                else: fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
         finally: f.close()
     finally:
         if fd != -1: os.close(fd)
@@ -172,7 +145,7 @@ def _verificar_referencias(banco, manifesto):
                 break
             if link_inseguro(parent):
                 raise ValueError('Referência insegura')
-        if not path.is_file() or path.stat().st_nlink != 1:
+        if not path.is_file() or not links_seguros(path):
             raise ValueError('Referência ausente ou com múltiplos links')
         if hashlib.sha256(path.read_bytes()).hexdigest() != item['sha256']:
             raise ValueError('Referência CSV alterada')
@@ -225,7 +198,7 @@ def _limpar_preparacao(banco, op, m):
         nomes.add(nome.casefold())
         hashes_esperados[nome.casefold()] = item['sha256']
         origem = banco.parent / nome
-        if link_inseguro(origem) or not origem.is_file() or origem.stat().st_nlink != 1:
+        if link_inseguro(origem) or not origem.is_file() or not links_seguros(origem):
             raise ValueError('origem insegura')
         if (i == 0 and not extrato_permitido(banco, banco.parent / nome)) or (i > 0 and (Path(nome).suffix.casefold() not in ANEXOS or csv_bancario_identificado(banco.parent / nome))):
             raise ValueError('tipo inválido')
@@ -240,7 +213,7 @@ def _limpar_preparacao(banco, op, m):
             for path in (historico, *historico.parents):
                 if path == banco.parent: break
                 if link_inseguro(path): raise ValueError('histórico inseguro durante limpeza')
-            if link_inseguro(historico) or not historico.is_file() or historico.stat().st_nlink != 1 or sha(historico) != m['historico_hash']:
+            if link_inseguro(historico) or not historico.is_file() or not links_seguros(historico) or sha(historico) != m['historico_hash']:
                 raise ValueError('histórico alterado')
         elif m.get('historico_hash') is not None:
             raise ValueError('hash histórico inválido')
@@ -248,7 +221,7 @@ def _limpar_preparacao(banco, op, m):
             raise ValueError('geral já publicado')
         for item in arquivos:
             origem = banco.parent / item['nome']
-            if link_inseguro(origem) or not origem.is_file() or origem.stat().st_nlink != 1 or sha(origem) != item['sha256']:
+            if link_inseguro(origem) or not origem.is_file() or not links_seguros(origem) or sha(origem) != item['sha256']:
                 raise ValueError('original ausente ou alterado')
     verificar()
     elementos = list(op.iterdir())
@@ -259,22 +232,22 @@ def _limpar_preparacao(banco, op, m):
         if link_inseguro(stage) or not stage.is_dir(): raise ValueError('preparação inválida')
         for file in stage.iterdir():
             if (file.name.casefold() not in nomes | {limpo_nome.casefold()} or link_inseguro(file)
-                    or not file.is_file() or file.stat().st_nlink != 1
+                    or not file.is_file() or not links_seguros(file)
                     or sha(file) != hashes_esperados[file.name.casefold()]):
                 raise ValueError('arquivo temporário desconhecido')
     temp = op / 'geral.tmp'
-    if temp.exists() and (link_inseguro(temp) or not temp.is_file() or temp.stat().st_nlink != 1 or sha(temp) != m['geral_hash']):
+    if temp.exists() and (link_inseguro(temp) or not temp.is_file() or not links_seguros(temp) or sha(temp) != m['geral_hash']):
         raise ValueError('geral temporário inválido')
     if stage.exists():
         for file in stage.iterdir():
             verificar()
-            if link_inseguro(file) or file.stat().st_nlink != 1 or sha(file) != hashes_esperados[file.name.casefold()]:
+            if link_inseguro(file) or not links_seguros(file) or sha(file) != hashes_esperados[file.name.casefold()]:
                 raise ValueError('temporário alterado durante a limpeza')
             file.unlink()
         stage.rmdir()
     if temp.exists():
         verificar()
-        if link_inseguro(temp) or temp.stat().st_nlink != 1 or sha(temp) != m['geral_hash']:
+        if link_inseguro(temp) or not links_seguros(temp) or sha(temp) != m['geral_hash']:
             raise ValueError('geral temporário alterado durante a limpeza')
         temp.unlink()
     verificar()
@@ -364,14 +337,14 @@ def recuperar_concluida(banco, *, bloqueio=None):
                     raise ValueError('nomes duplicados')
                 vistos.add(nome.casefold())
                 origem, copia = banco.parent / nome, pasta / nome
-                if link_inseguro(origem) or link_inseguro(copia) or not copia.is_file() or copia.stat().st_nlink != 1 or sha(copia) != item['sha256']:
+                if link_inseguro(origem) or link_inseguro(copia) or not copia.is_file() or not links_seguros(copia) or sha(copia) != item['sha256']:
                     raise ValueError('cópia divergente')
                 if (idx == 0 and not extrato_permitido(banco, pasta / nome)) or (idx > 0 and (Path(nome).suffix.casefold() not in ANEXOS or csv_bancario_identificado(pasta / nome))):
                     raise ValueError('tipo de arquivo inválido')
                 if idx == 0:
                     _validar_csv_manifesto(banco, m, pasta / nome)
                 if origem.exists():
-                    if not origem.is_file() or origem.stat().st_nlink != 1 or sha(origem) != item['sha256']:
+                    if not origem.is_file() or not links_seguros(origem) or sha(origem) != item['sha256']:
                         raise ValueError('origem divergente')
                     origens.append((origem, copia, item['sha256']))
             # Todos os dados e a ausência de alterações são verificados antes de
@@ -379,7 +352,7 @@ def recuperar_concluida(banco, *, bloqueio=None):
             for origem, copia, digest in origens:
                 _verificar_referencias(banco, m)
                 if (link_inseguro(origem) or link_inseguro(copia)
-                        or origem.stat().st_nlink != 1 or link_inseguro(geral)
+                        or not links_seguros(origem) or link_inseguro(geral)
                         or sha(origem) != digest or sha(copia) != digest
                         or sha(geral) != m['geral_hash']
                         or link_inseguro(pasta / limpo_nome)
@@ -450,8 +423,11 @@ def publicar_arquivo(temp, destino, substituir):
         os.replace(temp, destino)
     else:
         # Criação exclusiva: link falha se destino existe, mesmo sob corrida.
-        os.link(temp, destino)
-        os.unlink(temp)
+        if sys.platform == 'win32':
+            os.rename(temp, destino)  # Windows: sem REPLACE_EXISTING, sem cópia.
+        else:
+            os.link(temp, destino)
+            os.unlink(temp)
     fsync_dir(Path(destino).parent)
 
 

@@ -6,6 +6,7 @@ import hashlib
 import os
 import shutil
 from . import safe_storage
+from .storage_capabilities import links_seguros
 from .ofx_names import validar_nome_limpo
 
 from .organization import ANEXOS, OrganizacaoError, caminho_direto, link_inseguro, pasta_dia, proxima_importacao, localizar_historico, extrato_permitido
@@ -75,7 +76,7 @@ def planejar(raiz, banco, original, anexos=(), hoje=None, leitor=None, relogio=N
     from .organization import csv_bancario_identificado
     if not extrato_permitido(banco, original) or any(p.suffix.casefold() not in ANEXOS or csv_bancario_identificado(p) for p in anexos):
         raise OrganizacaoError('Tipo de extrato ou anexo não permitido')
-    if any(p.stat().st_nlink > 1 for p in arquivos):
+    if any(not links_seguros(p) for p in arquivos):
         raise OrganizacaoError('Arquivos com múltiplos links físicos não são suportados')
     hashes = {p: _hash(p) for p in arquivos}
     leitor = leitor or carregar_ofx
@@ -87,7 +88,7 @@ def planejar(raiz, banco, original, anexos=(), hoje=None, leitor=None, relogio=N
     else:
         _, atual = leitor(original)
     historico = localizar_historico(banco, hoje)
-    if historico and historico.stat().st_nlink > 1:
+    if historico and not links_seguros(historico):
         raise OrganizacaoError('Histórico com múltiplos links físicos não é suportado')
     antes = _hash(historico) if historico else None
     if formato_csv == 'valori':
@@ -104,7 +105,7 @@ def planejar(raiz, banco, original, anexos=(), hoje=None, leitor=None, relogio=N
         config = banco / '.rede.json'
         estabelecimento = None
         if config.exists() or link_inseguro(config):
-            if link_inseguro(config) or link_inseguro(config.parent) or config.stat().st_nlink != 1:
+            if link_inseguro(config) or link_inseguro(config.parent) or not links_seguros(config):
                 raise OrganizacaoError('Configuração Rede insegura')
             hashes[config] = _hash(config)
             try:
@@ -121,7 +122,7 @@ def planejar(raiz, banco, original, anexos=(), hoje=None, leitor=None, relogio=N
             # localizar_historico já validou a hierarquia e recusou links.
             from .organization import historicos_validos
             for _, snapshot in historicos_validos(banco, hoje):
-                if snapshot.stat().st_nlink != 1:
+                if not links_seguros(snapshot):
                     raise OrganizacaoError('Snapshot Rede com múltiplos links')
                 digest = _hash(snapshot)
                 modelos.append(leitor(snapshot)[1])
@@ -135,7 +136,7 @@ def planejar(raiz, banco, original, anexos=(), hoje=None, leitor=None, relogio=N
         from .organization import historicos_validos
         modelos = []
         for _, snapshot in historicos_validos(banco, hoje):
-            if snapshot.stat().st_nlink != 1:
+            if not links_seguros(snapshot):
                 raise OrganizacaoError('Snapshot Valori com múltiplos links')
             digest = _hash(snapshot)
             modelos.append(ler_historico(snapshot)[1])
@@ -211,7 +212,7 @@ def executar(plano, *, bloqueio=None):
     if localizar_historico(plano.banco, date.fromisoformat(plano.dia.name)) != plano.historico:
         raise OrganizacaoError('Histórico mudou desde o planejamento')
     for p, digest in plano.hashes.items():
-        if link_inseguro(p) or p.stat().st_nlink != 1 or _hash(p) != digest:
+        if link_inseguro(p) or not links_seguros(p) or _hash(p) != digest:
             raise OrganizacaoError('Arquivo alterado após validação: ' + p.name)
     for path in (plano.dia, *plano.dia.parents):
         if path == plano.banco.parent:
@@ -277,7 +278,7 @@ def executar(plano, *, bloqueio=None):
     safe_storage.atualizar_manifesto(op, manifest)
     # Revalidar logo antes de publicar: não confiar na verificação inicial.
     for p, digest in plano.hashes.items():
-        if link_inseguro(p) or p.stat().st_nlink != 1 or _hash(p) != digest:
+        if link_inseguro(p) or not links_seguros(p) or _hash(p) != digest:
             raise OrganizacaoError('Arquivo alterado antes da publicação: ' + p.name)
     if plano.historico != plano.geral and (plano.geral.exists() or link_inseguro(plano.geral)):
         raise OrganizacaoError('Geral de destino surgiu após planejamento')
@@ -299,7 +300,7 @@ def executar(plano, *, bloqueio=None):
         safe_storage._verificar_referencias(plano.banco, manifest)
         arquivo = plano.importacao / origem.name
         if (link_inseguro(origem) or link_inseguro(arquivo)
-                or origem.stat().st_nlink != 1 or link_inseguro(plano.geral)
+                or not links_seguros(origem) or link_inseguro(plano.geral)
                 or _hash(arquivo) != plano.hashes[origem]
                 or _hash(origem) != plano.hashes[origem]
                 or _hash(plano.geral).hex() != manifest['geral_hash']

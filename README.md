@@ -100,3 +100,5 @@ A compilação do EXE Windows utiliza `scripts/build_windows.ps1` e Nuitka; a au
 Documentação detalhada: [organização](docs/03-navegacao-organizacao.md), [integridade e recuperação](docs/04-integridade-recuperacao.md), [validação final](docs/06-validacao-final.md), [auditoria de empacotamento](docs/08-otimizacao-segura.md), [interface Colorama](docs/09-interface-colorama.md) e [segurança e assinatura](docs/07-icone-assinatura-seguranca.md).
 
 O executável da versão antiga permanece preservado em `dist/Compara OFX.exe` para fins históricos; **não é o executável de distribuição da versão 2.0**.
+
+Para pastas sincronizadas e unidades virtuais no Windows, consulte o [diagnóstico sintético de armazenamento e os limites de concorrência](docs/13-armazenamento-drive.md).
