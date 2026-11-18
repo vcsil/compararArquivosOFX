@@ -111,9 +111,42 @@ class ValoriCSV(unittest.TestCase):
                 (t.trntype, t.trnamt, t.dtposted.date()),
                 ("CREDIT", Decimal("970.25"), date(2026, 11, 12)),
             )
-            self.assertIn("2026-11-10T14:01:02", t.memo)
+            self.assertTrue(t.memo.startswith("Parcel 1/1 - "))
+            self.assertTrue(t.refnum.startswith("V3P"))
             self.assertLessEqual(len(t.memo), 255)
         self.assertEqual(model.statements[0].ledgerbal.balamt, Decimal("2910.75"))
+
+    def test_nome_e_memo_com_dados_csv_e_limite_ofx(self):
+        model = self.modelo(linha(
+            "FORMAT-1", **{"Loja": "RENATA WIST ACESSORIOS LTDA",
+                          "POS": "63922401", "Bandeira": "VISA"}
+        ))
+        tx = model.statements[0].transactions[0]
+        self.assertEqual(
+            tx.memo, "Parcel 1/1 - Crédito à Vista - VISA - PHYSICAL"
+        )
+        self.assertEqual(tx.name, "639224 - RENATA WIST ACESSORIOS")
+        self.assertEqual(len(tx.refnum), 32)
+        self.assertEqual(analisar_lotes(model).relatorio.estado, "PRIMEIRA_IMPORTACAO")
+        reparsed = interpretar_ofx("xml", serializar_ofx(model))
+        self.assertEqual(reparsed.statements[0].transactions[0].memo, tx.memo)
+        self.assertEqual(reparsed.statements[0].transactions[0].name, tx.name)
+
+    def test_parcela_sem_ordinal_no_csv_nao_inventa_numero(self):
+        fields = {
+            "Tipo compra": "Parcelamento sem Juros", "Parcelas": "2",
+            "Valor total bruto": "210,00", "Valor parcela bruto": "105,00",
+            "POS": "63922401", "Bandeira": "MASTERCARD",
+        }
+        model = self.modelo(
+            linha("FORMAT-P", **{**fields, "Valor líquido": "100,40"}),
+            linha("FORMAT-P", **{**fields, "Valor líquido": "98,71"}),
+        )
+        self.assertEqual(
+            {t.memo for t in model.statements[0].transactions},
+            {"Parcel ?/2 - Parcelamento sem Juros - MASTERCARD - PHYSICAL"},
+        )
+        self.assertEqual(analisar_lotes(model).relatorio.estado, "PRIMEIRA_IMPORTACAO")
 
     def test_cp1252_utf8_separadores_e_opcionais_vazios(self):
         row = linha(**{"Autorização": "", "POS": "", "Cod. acquirer": ""})
@@ -135,7 +168,6 @@ class ValoriCSV(unittest.TestCase):
 
     def test_status_nao_pago_bloqueia_arquivo_inteiro(self):
         for status in (
-            "Pendente",
             "Cancelado",
             "Estornado",
             "Revertido",
@@ -144,6 +176,86 @@ class ValoriCSV(unittest.TestCase):
         ):
             with self.subTest(status=status), self.assertRaises(ValueError):
                 self.modelo(linha("A"), linha("B", Status=status))
+
+    def test_pendentes_e_parcelas_distintas_no_mesmo_csv(self):
+        a = linha("PENDING-A", Status="Pendente")
+        b = linha("PENDING-B", Status="Pendente")
+        comum = dict(
+            **{
+                "Tipo compra": "Parcelamento sem Juros",
+                "Parcelas": "2",
+                "Valor total bruto": "210,00",
+                "Valor parcela bruto": "105,00",
+            }
+        )
+        p1 = linha("PARCELADO", **{**comum, "Valor líquido": "100,40"})
+        p2 = linha("PARCELADO", **{**comum, "Valor líquido": "98,71"})
+        model = self.modelo(a, p1, b, p2)
+        txs = model.statements[0].transactions
+        self.assertEqual(len(txs), 4)
+        self.assertEqual(len({t.fitid for t in txs}), 4)
+        parcelas = [t for t in txs if ":PARC:" in t.fitid]
+        self.assertEqual({t.trnamt for t in parcelas}, {Decimal("100.40"), Decimal("98.71")})
+        self.assertEqual(model.statements[0].ledgerbal.balamt, Decimal("199.11"))
+        self.assertEqual(sum(t.memo.endswith(" - PENDENTE") for t in txs), 2)
+        from controller.valori_csv import _metas
+        self.assertEqual(len(_metas(model)), 4)
+        self.assertEqual(
+            serializar_ofx(self.modelo(p2, b, p1, a)),
+            serializar_ofx(model),
+        )
+
+    def test_historico_v1_continua_compatível_com_v2(self):
+        from controller.valori_csv import ler_transacoes, _sha, _metas
+        source = self.criar(linha("LEGACY-V1"))
+        dados = ler_transacoes(source)[0]["meta"]
+        origem = json.dumps(
+            {k: v for k, v in dados.items() if k != "status"},
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        )
+        model = carregar_csv_valori(source)[1]
+        t = model.statements[0].transactions[0]
+        t.refnum = None
+        t.name = "Crédito à Vista"
+        t.memo = "VALORI:1 " + json.dumps(
+            [_sha(dados["loja"]), _sha(dados["nsu"]), _sha(origem),
+             dados["venda"], "C"], separators=(",", ":"),
+        )
+        self.assertEqual(len(_metas(model)), 1)
+        novo = carregar_csv_valori(source)[1]
+        self.assertEqual(analisar_lotes(novo, model).relatorio.estado, "SEM_NOVIDADES")
+
+    def test_pendente_que_vira_pago_substitui_sem_duplicar(self):
+        pendente = linha("STATUS-1", Status="Pendente")
+        pago = linha("STATUS-1", Status="Pago")
+        first = self.modelo(pendente)
+        second = self.modelo(pago)
+        result = analisar_lotes(second, first)
+        self.assertEqual(result.relatorio.estado, "APROVADO")
+        self.assertEqual(result.relatorio.novas.quantidade, 0)
+        self.assertEqual(result.indices_novos, (0,))
+        from controller.valori_csv import consolidar_historicos
+        merged = consolidar_historicos([first, second])
+        self.assertEqual(len(merged.statements[0].transactions), 1)
+        self.assertEqual(merged.statements[0].ledgerbal.balamt, Decimal("970.25"))
+        self.assertEqual(
+            analisar_lotes(first, second).relatorio.estado, "BLOQUEADO"
+        )
+
+    def test_fluxo_publica_entrada_com_pendentes_e_liquida_depois(self):
+        src = self.criar(linha("STATUS-2", Status="Pendente"))
+        first = planejar(self.root, self.bank, src, hoje=self.day)
+        executar(first)
+        self.assertEqual(
+            carregar_ofx(first.geral)[1].statements[0].ledgerbal.balamt,
+            Decimal("0"),
+        )
+        src = self.criar(linha("STATUS-2", Status="Pago"))
+        second = planejar(self.root, self.bank, src, hoje=date(2026, 11, 15))
+        executar(second)
+        ledger = carregar_ofx(second.geral)[1]
+        self.assertEqual(len(ledger.statements[0].transactions), 1)
+        self.assertEqual(ledger.statements[0].ledgerbal.balamt, Decimal("970.25"))
 
     def test_recusa_duplicados_de_nsu_e_pix(self):
         for rows in (
@@ -265,7 +377,7 @@ class ValoriCSV(unittest.TestCase):
 
     def test_historicos_nao_canonicos_e_metadados_adulterados_bloqueiam(self):
         first = self.modelo(linha())
-        for alter in ("banco", "memo", "tipo", "loja", "agencia", "saldo", "periodo"):
+        for alter in ("banco", "memo", "tipo", "refnum", "agencia", "saldo", "periodo"):
             old = interpretar_ofx("xml", serializar_ofx(first))
             st = old.statements[0]
             if alter == "saldo":
@@ -280,12 +392,8 @@ class ValoriCSV(unittest.TestCase):
                 st.transactions[0].trntype = "DEBIT"
             if alter == "agencia":
                 st.bankacctfrom.branchid = "0001"
-            if alter == "loja":
-                meta = json.loads(st.transactions[0].memo[9:])
-                meta[0] = "0" * 64
-                st.transactions[0].memo = "VALORI:1 " + json.dumps(
-                    meta, separators=(",", ":")
-                )
+            if alter == "refnum":
+                st.transactions[0].refnum = "V3PZ" + "0" * 28
             with self.subTest(alter=alter):
                 self.assertEqual(
                     analisar_lotes(first, old).relatorio.estado, "BLOQUEADO"
