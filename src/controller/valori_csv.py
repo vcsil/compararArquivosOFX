@@ -25,7 +25,7 @@ from .organization import OrganizacaoError
 
 PREFIXO_META = "VALORI:1 "
 PREFIXO_META_V2 = "VALORI:2 "
-REFNUM_V3 = re.compile(r"^[PN][FEU][0-9a-f]{30}$")
+REFNUM_V3 = re.compile(r"^V3[PN][FEU][0-9a-f]{28}$")
 PARCELA_SEPARADOR = ":PARC:"
 MODALIDADES = {"credito a vista": "Crédito à Vista", "debito": "Débito", "pix": "Pix", "parcelamento sem juros": "Parcelamento sem Juros"}
 BANKID = "000"  # Conta virtual do livro de liquidações, não um código bancário real.
@@ -281,7 +281,7 @@ def _refnum_v3(t):
     )
     canal = {"PHYSICAL": "F", "ECOMMERCE": "E", "UNKNOWN": "U"}[t["canal"]]
     status = "P" if meta["status"] == "Pago" else "N"
-    return status + canal + _sha(origem)[:14] + _sha(meta["nsu"])[:16]
+    return "V3" + status + canal + _sha(origem)[:12] + _sha(meta["nsu"])[:16]
 
 
 def _descricao_memo(t):
@@ -412,6 +412,72 @@ def _metas(model):
     pixs = set()
     lojas = set()
     for t in model.statements[0].transactions:
+        # V3 guarda o texto de apresentação exclusivamente em NAME/MEMO e
+        # o compromisso criptográfico com a origem no REFNUM. V1/V2 continuam
+        # lidos abaixo sem migração silenciosa dos históricos.
+        refnum = getattr(t, "refnum", None)
+        if isinstance(refnum, str) and REFNUM_V3.fullmatch(refnum):
+            descricao = t.memo or ""
+            m = re.fullmatch(
+                r"Parcel (1|\?)/([1-9]\d*) - "
+                r"(Crédito à Vista|Débito|Pix|Parcelamento sem Juros) - "
+                r"(.+) - (PHYSICAL|ECOMMERCE|UNKNOWN)( - PENDENTE)?",
+                descricao,
+            )
+            if m is None:
+                raise ValueError("Histórico Valori V3: descrição incompatível")
+            indice, parcelas, modalidade_texto, bandeira, canal, pendencia = m.groups()
+            status = "N" if pendencia else "P"
+            codigo_canal = {"PHYSICAL": "F", "ECOMMERCE": "E", "UNKNOWN": "U"}[canal]
+            if (refnum[2] != status or refnum[3] != codigo_canal
+                or (parcelas == "1" and indice != "1")
+                or (parcelas != "1" and indice != "?")):
+                raise ValueError("Histórico Valori V3: metadados contraditórios")
+            modalidade = {"Crédito à Vista": "C", "Débito": "D",
+                          "Pix": "P", "Parcelamento sem Juros": "S"}[modalidade_texto]
+            if (modalidade == "S") != (parcelas != "1"):
+                raise ValueError("Histórico Valori V3: modalidade/parcela inconsistente")
+            chave = ""
+            if modalidade == "S":
+                if PARCELA_SEPARADOR not in t.fitid:
+                    raise ValueError("Histórico Valori V3: FITID de parcela ausente")
+                nsu_texto, chave = t.fitid.rsplit(PARCELA_SEPARADOR, 1)
+                if not re.fullmatch(r"[0-9a-f]{24}", chave):
+                    raise ValueError("Histórico Valori V3: chave de parcela inválida")
+            elif modalidade == "P":
+                if not t.fitid.startswith("PIX:"):
+                    raise ValueError("Histórico Valori V3: FITID Pix inválido")
+                nsu_texto = None
+            else:
+                if t.fitid.startswith("PIX:") or PARCELA_SEPARADOR in t.fitid:
+                    raise ValueError("Histórico Valori V3: FITID de cartão inválido")
+                nsu_texto = t.fitid
+            nsu = refnum[16:32]
+            if nsu_texto is not None and _sha(nsu_texto)[:16] != nsu:
+                raise ValueError("Histórico Valori V3: NSU incompatível")
+            if (t.trntype != "CREDIT" or t.trnamt <= 0
+                or not isinstance(t.name, str) or not t.name.strip()
+                or len(t.name) > 32):
+                raise ValueError("Histórico Valori V3: transação incompatível")
+            if nsu in nsus and (modalidade != "S" or nsus[nsu] != "S"):
+                raise ValueError("Histórico Valori V3: NSU duplicado")
+            pix = t.fitid[4:] if modalidade == "P" else ""
+            if pix and pix in pixs:
+                raise ValueError("Histórico Valori V3: Pix duplicado")
+            nsus[nsu] = modalidade
+            if pix:
+                pixs.add(pix)
+            # A identidade da loja vem do cabeçalho bancário, não é inferida
+            # novamente de um NAME truncado.
+            loja = conta.conta[3:]
+            lojas.add(loja)
+            result[t.fitid] = {
+                "loja": loja, "nsu": nsu, "pix": pix,
+                "origem": refnum[4:16], "venda": "",
+                "modalidade": modalidade, "status": status,
+                "parcelas": parcelas, "chave": chave,
+            }
+            continue
         if not t.memo:
             raise ValueError("Histórico Valori sem metadados de origem verificáveis")
         v2 = t.memo.startswith(PREFIXO_META_V2)
@@ -462,14 +528,14 @@ def _metas(model):
                     (modalidade != "S" and _sha(t.fitid) != nsu)
                     or t.fitid.startswith("PIX:")
                 ))
-                or (nsu in nsus and (modalidade != "S" or nsus[nsu] != "S"))
+                or (nsu[:16] in nsus and (modalidade != "S" or nsus[nsu[:16]] != "S"))
             ):
                 raise ValueError("Identificador Valori ambíguo no histórico")
-            nsus[nsu] = modalidade
+            nsus[nsu[:16]] = modalidade
             if pix:
                 pixs.add(pix)
             result[t.fitid] = {
-                "loja": loja, "nsu": nsu, "pix": pix,
+                "loja": loja, "nsu": nsu[:16], "pix": pix,
                 "origem": origem, "venda": venda,
                 "modalidade": modalidade, "status": status,
                 "parcelas": parcelas, "chave": chave,
@@ -531,8 +597,10 @@ def analisar_lotes(atual, anterior=None):
             old = oldids.get(t.fitid)
             if old is not None:
                 om = oldmeta[t.fitid]
-                campos = ("loja", "nsu", "pix", "venda", "modalidade", "parcelas", "chave")
-                metadados_iguais = all(m[c] == om[c] for c in campos)
+                campos = ("loja", "nsu", "pix", "modalidade", "parcelas", "chave")
+                metadados_iguais = all(m[c] == om[c] for c in campos) and (
+                    not m["venda"] or not om["venda"] or m["venda"] == om["venda"]
+                )
                 # V1 conserva o hash completo da origem; V2 guarda seu prefixo.
                 origem_igual = (
                     m["origem"].startswith(om["origem"])
@@ -566,7 +634,10 @@ def _metas_sem_saldo(transacoes):
     estados = {}
     for t in transacoes:
         memo = t.memo or ""
-        if memo.startswith(PREFIXO_META_V2):
+        refnum = getattr(t, "refnum", None)
+        if isinstance(refnum, str) and REFNUM_V3.fullmatch(refnum):
+            estados[t.fitid] = refnum[2]
+        elif memo.startswith(PREFIXO_META_V2):
             dados = json.loads(memo[len(PREFIXO_META_V2):])
             estados[t.fitid] = dados[5]
         elif memo.startswith(PREFIXO_META):
