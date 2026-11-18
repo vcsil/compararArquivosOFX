@@ -122,12 +122,31 @@ class Compatibilidade(unittest.TestCase):
         from controller.organization import proxima_importacao
         folder=self.bank/'dia';folder.mkdir();(folder/'01').mkdir()
         self.assertEqual(proxima_importacao(folder).name,'002')
-    def test_legado_no_mesmo_dia_nao_cria_dois_gerais(self):
-        hist=self.historico('11 - Nov 2026/2026-11-12')
-        src=self.root/'novo.ofx';src.write_bytes(fixture([A]))
-        with self.assertRaisesRegex(OrganizacaoError,'mesmo dia'):
-            planejar(self.root,self.bank,src,hoje=date(2026,11,12))
-        self.assertTrue(src.exists());self.assertEqual(hist.read_bytes(),fixture([A]))
+    def test_legado_no_mesmo_dia_reutiliza_geral_e_recupera(self):
+        hist = self.historico('2026/11 - Novembro/2026-11-12',
+                              name='Bradesco Geral - 2026-11-12.ofx')
+        src = self.root / 'novo.ofx'
+        raw = fixture([A, ('20230103120000', '10', 'NEW', 'Novo')])
+        src.write_bytes(raw)
+        plano = planejar(self.root, self.bank, src, hoje=date(2026, 11, 12))
+        self.assertEqual(plano.geral, hist)
+        self.assertEqual(plano.importacao, hist.parent / '002')
+        publicar = ss.publicar_arquivo
+
+        def interromper(*args):
+            publicar(*args)
+            raise OSError('interrupção após trocar o Geral')
+
+        with patch.object(ss, 'publicar_arquivo', side_effect=interromper), self.assertRaises(OSError):
+            executar(plano)
+        self.assertTrue(src.exists())
+        ss.recuperar_concluida(self.bank)
+        self.assertFalse(src.exists())
+        self.assertEqual((plano.importacao / src.name).read_bytes(), raw)
+        self.assertEqual(list(hist.parent.glob('*.ofx')), [hist])
+        _, modelo = carregar_ofx(hist)
+        self.assertEqual([t.fitid for t in modelo.statements[0].transactions], ['2', 'NEW'])
+
     def test_geral_data_divergente_ou_multiplo_nao_e_escolhido(self):
         hist=self.historico('2026/11 - Nov 2026/2026-11-12',name='OFXGeral-2026-11-11.ofx')
         with self.assertRaises(OrganizacaoError):localizar_historico(self.bank,D)

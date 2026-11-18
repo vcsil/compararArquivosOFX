@@ -49,13 +49,23 @@ O índice de leitura aceita exclusivamente as convenções verificadas:
 - Geral `OFXGeral-AAAA-MM-DD.ofx` e a convenção antiga
   `Bradesco Geral - AAAA-MM-DD.ofx`, com a data igual à da pasta diária.
 
-Não há migração nem renomeação. Mês/ano/data inconsistentes, nomes desconhecidos,
-dois Gerais para a mesma data, Geral ausente e links continuam bloqueados.
-Se existir um histórico legado na própria data de destino, bloqueia antes de
-criar outro Geral em uma hierarquia diferente. É necessária conciliação manual.
-A permissão de leitura de referências antigas também é verificada na recuperação
-v1/v2; os destinos novos continuam usando a hierarquia atual estrita.
-A extensão OFX é reconhecida sem distinção de maiúsculas.
+Para extratos OFX, o Geral da data da importação tem prioridade. Se o dia
+estiver vazio, a busca segue em ordem decrescente até o primeiro Geral. Uma
+importação sem Geral, dois Gerais para a mesma data ou uma estrutura insegura
+na janela relevante exigem conciliação. A mensagem indica o caminho relativo.
+Uma estrutura desconhecida cuja antiguidade não pode ser estabelecida também
+exige inspeção. O programa lê financeiramente apenas o Geral selecionado.
+Se a leitura ou a comparação falhar, a importação para nessa referência.
+
+Dias anteriores à referência ficam intactos. Se o Geral do dia atual estiver
+em uma hierarquia legada reconhecida, a importação usa esse mesmo Geral e
+continua a numeração nessa pasta. Quando não há Geral nem dados de importações
+anteriores, a primeira importação cria a hierarquia atual. A extensão OFX é
+reconhecida sem distinção de maiúsculas. A recuperação v1/v2 verifica os
+caminhos e hashes da operação, inclusive no dia atual de uma hierarquia legada.
+
+Rede e Valori continuam validando a estrutura completa e consolidando seus
+snapshots CSV.
 
 A simples leitura bem-sucedida não prova continuidade: bancos tradicionais
 continuam exigindo a última data e cobertura da referência. Exporte um período

@@ -9,7 +9,7 @@ from . import safe_storage
 from .storage_capabilities import links_seguros
 from .ofx_names import validar_nome_limpo
 
-from .organization import ANEXOS, OrganizacaoError, caminho_direto, link_inseguro, pasta_dia, proxima_importacao, localizar_historico, extrato_permitido
+from .organization import ANEXOS, OrganizacaoError, caminho_direto, link_inseguro, pasta_dia, proxima_importacao, localizar_historico, historicos_validos, validar_historico_relativo, extrato_permitido
 
 @dataclass
 class Plano:
@@ -87,7 +87,11 @@ def planejar(raiz, banco, original, anexos=(), hoje=None, leitor=None, relogio=N
         _, atual = carregar_csv(original, formato_csv)
     else:
         _, atual = leitor(original)
-    historico = localizar_historico(banco, hoje)
+    snapshots = historicos_validos(banco, hoje) if formato_csv else []
+    if formato_csv:
+        historico = snapshots[-1][1] if snapshots else None
+    else:
+        historico = localizar_historico(banco, hoje)
     if historico and not links_seguros(historico):
         raise OrganizacaoError('Histórico com múltiplos links físicos não é suportado')
     antes = _hash(historico) if historico else None
@@ -119,9 +123,7 @@ def planejar(raiz, banco, original, anexos=(), hoje=None, leitor=None, relogio=N
         if historico:
             from .rede_csv import consolidar_historicos
             modelos = []
-            # localizar_historico já validou a hierarquia e recusou links.
-            from .organization import historicos_validos
-            for _, snapshot in historicos_validos(banco, hoje):
+            for _, snapshot in snapshots:
                 if not links_seguros(snapshot):
                     raise OrganizacaoError('Snapshot Rede com múltiplos links')
                 digest = _hash(snapshot)
@@ -133,9 +135,8 @@ def planejar(raiz, banco, original, anexos=(), hoje=None, leitor=None, relogio=N
         resultado = analisar_lotes(atual, anterior, estabelecimento)
     elif formato_csv == 'valori':
         from .valori_csv import analisar_lotes, consolidar_historicos
-        from .organization import historicos_validos
         modelos = []
-        for _, snapshot in historicos_validos(banco, hoje):
+        for _, snapshot in snapshots:
             if not links_seguros(snapshot):
                 raise OrganizacaoError('Snapshot Valori com múltiplos links')
             digest = _hash(snapshot)
@@ -153,12 +154,14 @@ def planejar(raiz, banco, original, anexos=(), hoje=None, leitor=None, relogio=N
     assinatura_limpo = _assinatura(filtrado)
     limpo = serializar_ofx(filtrado)
     dia = pasta_dia(banco, hoje)
-    destino = proxima_importacao(dia)
     geral = dia / f'OFXGeral-{hoje.isoformat()}.ofx'
-    if historico and historico != geral:
-        from .organization import validar_historico_relativo
-        if validar_historico_relativo(banco, historico.relative_to(banco)) == hoje:
+    if historico and validar_historico_relativo(banco, historico.relative_to(banco)) == hoje:
+        if formato_csv and historico != geral:
             raise OrganizacaoError('Histórico legado no mesmo dia do destino: exige conciliação antes de criar outro Geral')
+        # O dia atual pode ter sido iniciado pelo legado. Use o mesmo Geral.
+        geral = historico
+        dia = geral.parent
+    destino = proxima_importacao(dia)
     if destino.exists() or link_inseguro(destino):
         raise OrganizacaoError('Pasta de importação já existe')
     if link_inseguro(geral) or (geral.exists() and historico != geral):
@@ -200,6 +203,17 @@ def planejar(raiz, banco, original, anexos=(), hoje=None, leitor=None, relogio=N
                  resultado, limpo, geral_bytes, hashes, assinatura_limpo, assinatura_geral, limpo_nome)
 
 
+def _revalidar_historico(plano):
+    hoje = date.fromisoformat(plano.dia.name)
+    if plano.original.suffix.casefold() == '.csv':
+        snapshots = historicos_validos(plano.banco, hoje)
+        esperado = set(plano.hashes) - {plano.original, *plano.anexos, plano.banco / '.rede.json'}
+        if {path for _, path in snapshots} != esperado:
+            raise OrganizacaoError('Snapshots CSV mudaram desde o planejamento')
+    elif localizar_historico(plano.banco, hoje) != plano.historico:
+        raise OrganizacaoError('Histórico mudou desde o planejamento')
+
+
 def executar(plano, *, bloqueio=None):
     """Publica dados preparados; uma interrupção deixa registro e bloqueia nova operação."""
     if bloqueio is None:
@@ -209,8 +223,7 @@ def executar(plano, *, bloqueio=None):
         raise OrganizacaoError('Bloqueio da instituição não está ativo')
     from .ofx_functions import carregar_ofx
     safe_storage.exigir_sem_pendencias(plano.banco)
-    if localizar_historico(plano.banco, date.fromisoformat(plano.dia.name)) != plano.historico:
-        raise OrganizacaoError('Histórico mudou desde o planejamento')
+    _revalidar_historico(plano)
     for p, digest in plano.hashes.items():
         if link_inseguro(p) or not links_seguros(p) or _hash(p) != digest:
             raise OrganizacaoError('Arquivo alterado após validação: ' + p.name)
@@ -277,6 +290,7 @@ def executar(plano, *, bloqueio=None):
     manifest['estado'] = 'PREPARADO'
     safe_storage.atualizar_manifesto(op, manifest)
     # Revalidar logo antes de publicar: não confiar na verificação inicial.
+    _revalidar_historico(plano)
     for p, digest in plano.hashes.items():
         if link_inseguro(p) or not links_seguros(p) or _hash(p) != digest:
             raise OrganizacaoError('Arquivo alterado antes da publicação: ' + p.name)

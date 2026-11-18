@@ -7,7 +7,6 @@ from pathlib import Path
 import sys
 import threading
 import uuid
-from datetime import date
 
 from .organization import OrganizacaoError, link_inseguro, validar_historico_relativo
 from .storage_capabilities import links_seguros
@@ -121,7 +120,6 @@ def _validar_csv_manifesto(banco, manifesto, arquivo):
 
 def _verificar_referencias(banco, manifesto):
     """Verifica referências CSV sem mudar manifestos v1/v2 anteriores."""
-    from .organization import pasta_dia
     refs_rede = manifesto.get('referencias_rede', [])
     refs_csv = manifesto.get('referencias_csv', [])
     if not isinstance(refs_rede, list) or not isinstance(refs_csv, list):
@@ -152,22 +150,30 @@ def _verificar_referencias(banco, manifesto):
             raise ValueError('Referência CSV alterada')
 
 
+def _destinos_manifesto(banco, manifesto):
+    """Aceita destino legado somente quando ele é o próprio Geral de referência."""
+    import re
+    from .organization import pasta_dia
+
+    pasta, geral = Path(manifesto['pasta']), Path(manifesto['geral'])
+    data = validar_historico_relativo(banco, geral)
+    if (pasta.parent != geral.parent
+            or not re.fullmatch(r'00[1-9]|0[1-9][0-9]|[1-9][0-9]{2}', pasta.name)):
+        raise ValueError('pasta de importação inválida')
+    canonico = pasta_dia(banco, data) / f'OFXGeral-{data.isoformat()}.ofx'
+    if banco / geral != canonico and (manifesto.get('historico') != manifesto['geral']
+                                     or manifesto.get('formato_csv') is not None):
+        raise ValueError('destino legado deve coincidir com a referência OFX')
+    return banco / pasta, banco / geral
+
+
 def _limpar_preparacao(banco, op, m):
     """Remove apenas preparação própria quando ainda não houve publicação."""
     import re
-    from .organization import ANEXOS, pasta_dia, extrato_permitido, csv_bancario_identificado
+    from .organization import ANEXOS, extrato_permitido, csv_bancario_identificado
     if not re.fullmatch(r'[0-9a-f]{32}', op.name):
         raise ValueError('identificador de operação inválido')
-    pasta, geral = Path(m['pasta']), Path(m['geral'])
-    for path in (pasta, geral):
-        if path.is_absolute() or path.drive or '..' in path.parts or len(path.parts) != 4:
-            raise ValueError('caminho inválido')
-    data = date.fromisoformat(geral.parent.name)
-    if (pasta.parent != geral.parent or pasta_dia(banco, data).relative_to(banco) != geral.parent
-            or not re.fullmatch(r'00[1-9]|0[1-9][0-9]|[1-9][0-9]{2}', pasta.name)
-            or geral.name != f'OFXGeral-{data.isoformat()}.ofx'):
-        raise ValueError('destino inválido')
-    pasta, geral = banco / pasta, banco / geral
+    pasta, geral = _destinos_manifesto(banco, m)
     for path in (pasta, geral, *pasta.parents):
         if path == banco.parent: break
         if link_inseguro(path): raise ValueError('link inseguro')
@@ -288,19 +294,7 @@ def recuperar_concluida(banco, *, bloqueio=None):
                 raise ValueError('operação ainda não concluída')
             if sorted(x.name for x in op.iterdir()) != ['manifesto.json']:
                 raise ValueError('arquivos auxiliares pendentes')
-            pasta, geral = Path(m['pasta']), Path(m['geral'])
-            for path in (pasta, geral):
-                if path.is_absolute() or path.drive or '..' in path.parts or len(path.parts) != 4:
-                    raise ValueError('caminho inválido')
-            if pasta.parent != geral.parent or not (len(pasta.name) == 3 and pasta.name.isascii() and pasta.name.isdigit() and pasta.name != '000'):
-                raise ValueError('pasta de importação inválida')
-            from .organization import pasta_dia
-            data = date.fromisoformat(geral.parent.name)
-            if pasta_dia(banco, data).relative_to(banco) != geral.parent:
-                raise ValueError('hierarquia da operação inválida')
-            if geral.name != f'OFXGeral-{geral.parent.name}.ofx':
-                raise ValueError('nome do geral inválido')
-            pasta, geral = banco / pasta, banco / geral
+            pasta, geral = _destinos_manifesto(banco, m)
             for path in (pasta, geral, *pasta.parents):
                 if path == banco.parent: break
                 if link_inseguro(path): raise ValueError('link inseguro')
