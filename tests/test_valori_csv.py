@@ -172,6 +172,24 @@ class ValoriCSV(unittest.TestCase):
             serializar_ofx(model),
         )
 
+    def test_historico_v1_continua_compatível_com_v2(self):
+        from controller.valori_csv import ler_transacoes, _sha, _metas
+        source = self.criar(linha("LEGACY-V1"))
+        dados = ler_transacoes(source)[0]["meta"]
+        origem = json.dumps(
+            {k: v for k, v in dados.items() if k != "status"},
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        )
+        model = carregar_csv_valori(source)[1]
+        t = model.statements[0].transactions[0]
+        t.memo = "VALORI:1 " + json.dumps(
+            [_sha(dados["loja"]), _sha(dados["nsu"]), _sha(origem),
+             dados["venda"], "C"], separators=(",", ":"),
+        )
+        self.assertEqual(len(_metas(model)), 1)
+        novo = carregar_csv_valori(source)[1]
+        self.assertEqual(analisar_lotes(novo, model).relatorio.estado, "SEM_NOVIDADES")
+
     def test_pendente_que_vira_pago_substitui_sem_duplicar(self):
         pendente = linha("STATUS-1", Status="Pendente")
         pago = linha("STATUS-1", Status="Pago")
