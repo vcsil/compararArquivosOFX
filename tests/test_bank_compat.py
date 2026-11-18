@@ -124,7 +124,7 @@ class Compatibilidade(unittest.TestCase):
         self.assertEqual(proxima_importacao(folder).name,'002')
     def test_legado_no_mesmo_dia_reutiliza_geral_e_recupera(self):
         hist = self.historico('2026/11 - Novembro/2026-11-12',
-                              name='Bradesco Geral - 2026-11-12.ofx')
+                              name='Bradesco Geral - 2026-11-12.ofx').resolve()
         src = self.root / 'novo.ofx'
         raw = fixture([A, ('20230103120000', '10', 'NEW', 'Novo')])
         src.write_bytes(raw)

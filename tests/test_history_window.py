@@ -19,7 +19,7 @@ HOJE = date(2026, 11, 18)
 class JanelaHistorica(unittest.TestCase):
     def setUp(self):
         temp = self.enterContext(TemporaryDirectory())
-        self.raiz = Path(temp)
+        self.raiz = Path(temp).resolve()
         self.banco = self.raiz / 'Banco Sintético'
         self.banco.mkdir()
         self.original = self.raiz / 'Entrada.ofx'
