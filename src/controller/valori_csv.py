@@ -478,7 +478,9 @@ def analisar_lotes(atual, anterior=None):
         dups = []
         for i, t in enumerate(tx):
             m = meta[t.fitid]
-            if (m["nsu"] in oldnsu and t.fitid not in oldnsu[m["nsu"]] and m["modalidade"] != "S") or (
+            if (m["nsu"] in oldnsu and t.fitid not in oldnsu[m["nsu"]] and (
+                m["modalidade"] != "S" or len(oldnsu[m["nsu"]]) >= int(m["parcelas"])
+            )) or (
                 m["pix"] and m["pix"] in oldpix and oldpix[m["pix"]] != t.fitid
             ):
                 raise ValueError("Identificador secundário Valori conflitante")
