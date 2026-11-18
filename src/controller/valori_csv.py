@@ -311,8 +311,11 @@ def montar_modelo(txs):
         sub(node, "TRNAMT", str(t["valor"]))
         sub(node, "FITID", t["fitid"])
         status = t["meta"]["status"]
-        sub(node, "NAME", t["meta"]["modalidade"] if status == "Pago"
-            else "Pendente - " + t["meta"]["modalidade"])
+        nome = t["meta"]["modalidade"] if status == "Pago" else (
+            "Pendente - Parcelado" if t["meta"]["modalidade"] == "Parcelamento sem Juros"
+            else "Pendente - " + t["meta"]["modalidade"]
+        )
+        sub(node, "NAME", nome)
         dados_meta = metadados(t)
         prefixo = PREFIXO_META if len(dados_meta) == 5 else PREFIXO_META_V2
         memo = prefixo + json.dumps(dados_meta, separators=(",", ":"))
