@@ -111,9 +111,42 @@ class ValoriCSV(unittest.TestCase):
                 (t.trntype, t.trnamt, t.dtposted.date()),
                 ("CREDIT", Decimal("970.25"), date(2026, 11, 12)),
             )
-            self.assertIn("2026-11-10T14:01:02", t.memo)
+            self.assertTrue(t.memo.startswith("Parcel 1/1 - "))
+            self.assertTrue(t.refnum.startswith("V3P"))
             self.assertLessEqual(len(t.memo), 255)
         self.assertEqual(model.statements[0].ledgerbal.balamt, Decimal("2910.75"))
+
+    def test_nome_e_memo_com_dados_csv_e_limite_ofx(self):
+        model = self.modelo(linha(
+            "FORMAT-1", **{"Loja": "RENATA WIST ACESSORIOS LTDA",
+                          "POS": "63922401", "Bandeira": "VISA"}
+        ))
+        tx = model.statements[0].transactions[0]
+        self.assertEqual(
+            tx.memo, "Parcel 1/1 - Crédito à Vista - VISA - PHYSICAL"
+        )
+        self.assertEqual(tx.name, "639224 - RENATA WIST ACESSORIOS")
+        self.assertEqual(len(tx.refnum), 32)
+        self.assertEqual(analisar_lotes(model).relatorio.estado, "PRIMEIRA_IMPORTACAO")
+        reparsed = interpretar_ofx("xml", serializar_ofx(model))
+        self.assertEqual(reparsed.statements[0].transactions[0].memo, tx.memo)
+        self.assertEqual(reparsed.statements[0].transactions[0].name, tx.name)
+
+    def test_parcela_sem_ordinal_no_csv_nao_inventa_numero(self):
+        fields = {
+            "Tipo compra": "Parcelamento sem Juros", "Parcelas": "2",
+            "Valor total bruto": "210,00", "Valor parcela bruto": "105,00",
+            "POS": "63922401", "Bandeira": "MASTERCARD",
+        }
+        model = self.modelo(
+            linha("FORMAT-P", **{**fields, "Valor líquido": "100,40"}),
+            linha("FORMAT-P", **{**fields, "Valor líquido": "98,71"}),
+        )
+        self.assertEqual(
+            {t.memo for t in model.statements[0].transactions},
+            {"Parcel ?/2 - Parcelamento sem Juros - MASTERCARD - PHYSICAL"},
+        )
+        self.assertEqual(analisar_lotes(model).relatorio.estado, "PRIMEIRA_IMPORTACAO")
 
     def test_cp1252_utf8_separadores_e_opcionais_vazios(self):
         row = linha(**{"Autorização": "", "POS": "", "Cod. acquirer": ""})
@@ -164,7 +197,7 @@ class ValoriCSV(unittest.TestCase):
         parcelas = [t for t in txs if ":PARC:" in t.fitid]
         self.assertEqual({t.trnamt for t in parcelas}, {Decimal("100.40"), Decimal("98.71")})
         self.assertEqual(model.statements[0].ledgerbal.balamt, Decimal("199.11"))
-        self.assertEqual(sum(t.name.startswith("Pendente - ") for t in txs), 2)
+        self.assertEqual(sum(t.memo.endswith(" - PENDENTE") for t in txs), 2)
         from controller.valori_csv import _metas
         self.assertEqual(len(_metas(model)), 4)
         self.assertEqual(
@@ -182,6 +215,8 @@ class ValoriCSV(unittest.TestCase):
         )
         model = carregar_csv_valori(source)[1]
         t = model.statements[0].transactions[0]
+        t.refnum = None
+        t.name = "Crédito à Vista"
         t.memo = "VALORI:1 " + json.dumps(
             [_sha(dados["loja"]), _sha(dados["nsu"]), _sha(origem),
              dados["venda"], "C"], separators=(",", ":"),
@@ -342,7 +377,7 @@ class ValoriCSV(unittest.TestCase):
 
     def test_historicos_nao_canonicos_e_metadados_adulterados_bloqueiam(self):
         first = self.modelo(linha())
-        for alter in ("banco", "memo", "tipo", "loja", "agencia", "saldo", "periodo"):
+        for alter in ("banco", "memo", "tipo", "refnum", "agencia", "saldo", "periodo"):
             old = interpretar_ofx("xml", serializar_ofx(first))
             st = old.statements[0]
             if alter == "saldo":
@@ -357,12 +392,8 @@ class ValoriCSV(unittest.TestCase):
                 st.transactions[0].trntype = "DEBIT"
             if alter == "agencia":
                 st.bankacctfrom.branchid = "0001"
-            if alter == "loja":
-                meta = json.loads(st.transactions[0].memo[9:])
-                meta[0] = "0" * 64
-                st.transactions[0].memo = "VALORI:1 " + json.dumps(
-                    meta, separators=(",", ":")
-                )
+            if alter == "refnum":
+                st.transactions[0].refnum = "V3PZ" + "0" * 28
             with self.subTest(alter=alter):
                 self.assertEqual(
                     analisar_lotes(first, old).relatorio.estado, "BLOQUEADO"
