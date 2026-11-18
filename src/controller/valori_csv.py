@@ -465,35 +465,64 @@ def analisar_lotes(atual, anterior=None):
         oldmeta = _metas(anterior)
         if {m["loja"] for m in meta.values()} != {m["loja"] for m in oldmeta.values()}:
             raise ValueError("Identidade completa de loja Valori divergente")
-        oldnsu = {m["nsu"]: k for k, m in oldmeta.items()}
+        oldnsu = {}
+        for k, m in oldmeta.items():
+            oldnsu.setdefault(m["nsu"], set()).add(k)
         oldpix = {m["pix"]: k for k, m in oldmeta.items() if m["pix"]}
         indices = []
         dups = []
         for i, t in enumerate(tx):
             m = meta[t.fitid]
-            if (m["nsu"] in oldnsu and oldnsu[m["nsu"]] != t.fitid) or (
+            if (m["nsu"] in oldnsu and t.fitid not in oldnsu[m["nsu"]] and m["modalidade"] != "S") or (
                 m["pix"] and m["pix"] in oldpix and oldpix[m["pix"]] != t.fitid
             ):
                 raise ValueError("Identificador secundário Valori conflitante")
             old = oldids.get(t.fitid)
             if old is not None:
+                om = oldmeta[t.fitid]
+                campos = ("loja", "nsu", "pix", "venda", "modalidade", "parcelas", "chave")
+                metadados_iguais = all(m[c] == om[c] for c in campos)
+                # V1 conserva o hash completo da origem; V2 guarda seu prefixo.
+                origem_igual = (
+                    m["origem"].startswith(om["origem"])
+                    or om["origem"].startswith(m["origem"])
+                )
                 if (t.dtposted, t.trnamt, t.trntype) != (
-                    old.dtposted,
-                    old.trnamt,
-                    old.trntype,
-                ) or m != oldmeta[t.fitid]:
+                    old.dtposted, old.trnamt, old.trntype
+                ) or not metadados_iguais or not origem_igual:
                     raise ValueError("Conflito financeiro ou identidade ambígua Valori")
-                dups.append(t)
+                if om["status"] == "N" and m["status"] == "P":
+                    # Atualização do lançamento, não novo recebimento.
+                    indices.append(i)
+                elif m["status"] == om["status"]:
+                    dups.append(t)
+                else:
+                    raise ValueError("Regressão de pagamento para pendente; exige conciliação")
             else:
                 indices.append(i)
         r.anteriores = _totais(oldtx)
         r.duplicatas = _totais(dups)
-        r.novas = _totais([tx[i] for i in indices])
+        r.novas = _totais([tx[i] for i in indices if tx[i].fitid not in oldids])
         r.estado = "APROVADO" if indices else "SEM_NOVIDADES"
         return Resultado(r, tuple(indices))
     except (ValueError, AttributeError, TypeError, KeyError, ArithmeticError) as exc:
         r.motivo = str(exc)
         return Resultado(r)
+
+
+def _metas_sem_saldo(transacoes):
+    """Estados de pagamento já autenticados no MEMO; sem validar saldo anterior."""
+    estados = {}
+    for t in transacoes:
+        memo = t.memo or ""
+        if memo.startswith(PREFIXO_META_V2):
+            dados = json.loads(memo[len(PREFIXO_META_V2):])
+            estados[t.fitid] = dados[5]
+        elif memo.startswith(PREFIXO_META):
+            estados[t.fitid] = "P"
+        else:
+            raise ValueError("Transação Valori sem prova de origem")
+    return estados
 
 
 def _atualizar_acumulador(model):
@@ -503,8 +532,10 @@ def _atualizar_acumulador(model):
     statement.banktranlist.dtstart = min(t.dtposted for t in statement.transactions)
     statement.banktranlist.dtend = max(t.dtposted for t in statement.transactions)
     statement.ledgerbal.dtasof = statement.banktranlist.dtend
+    meta = _metas_sem_saldo(statement.transactions)
     statement.ledgerbal.balamt = sum(
-        (t.trnamt for t in statement.transactions), Decimal("0")
+        (t.trnamt for t in statement.transactions if meta[t.fitid] == "P"),
+        Decimal("0")
     )
 
 
@@ -521,8 +552,12 @@ def consolidar_historicos(modelos):
         r = analisar_lotes(model, result)
         if r.relatorio.estado == "BLOQUEADO":
             raise OrganizacaoError(r.relatorio.motivo)
-        result.statements[0].transactions.extend(
-            r.modelo_filtrado(model).statements[0].transactions
-        )
+        incoming = r.modelo_filtrado(model).statements[0].transactions
+        por_id = {t.fitid: i for i, t in enumerate(result.statements[0].transactions)}
+        for tx in incoming:
+            if tx.fitid in por_id:
+                result.statements[0].transactions[por_id[tx.fitid]] = tx
+            else:
+                result.statements[0].transactions.append(tx)
         _atualizar_acumulador(result)
     return result
