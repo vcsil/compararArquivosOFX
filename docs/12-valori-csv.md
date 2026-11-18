@@ -159,3 +159,40 @@ Nuitka onefile, baseline e comparação no mesmo runner. Smokes testam Rede e Va
 juntas, OFX, XLSX, preservação, reimportação, conflito e recuperação. O inventário
 exige Colorama, conversores e despachante, recusa testes/ferramentas do projeto,
 e os builds verificam o ícone azul e Defender sem desativar proteções.
+
+
+## Apresentação legível OFX (V3)
+
+A geração nova usa `NAME` para o identificador/razão social e `MEMO` para a
+descrição da venda, calculados exclusivamente do CSV, sem publicar dados
+privados nos testes sintéticos:
+
+- `NAME`: prefixo de seis dígitos extraído de `POS` com o layout
+  `NNNNNNNN` (`NNNNNN` é a identificação do estabelecimento), seguido
+  de ` - ` e a `Loja`. Sem prefixo inequívoco, usa somente o texto da loja.
+  O campo OFX NAME permite **32 caracteres**; valores mais longos são
+  truncados apenas para exibição. Para a loja do pacote privado, a forma
+  solicitada `639224 - RENATA WIST ACESSORIOS LTDA` tem 36 caracteres;
+  o NAME OFX compatível é
+  `639224 - RENATA WIST ACESSORIOS`.
+- `MEMO`: `Parcel 1/1 - Crédito à Vista - VISA - PHYSICAL`,
+  com `Parcel` + quantidade de parcelas, `Tipo compra`, `Bandeira`
+  e canal. Só é possível atribuir `1/1` quando `Parcelas=1`.
+  **O CSV não possui o ordinal das parcelas de uma venda em 2x**:
+  escrevemos `Parcel ?/2`, sem inventar 1ª/2ª parcela ou associá-las
+  por ordem de linha ou valor líquido.
+- `PHYSICAL` é uma **classificação operacional derivada**, não um campo
+  explícito do CSV: emitida quando há POS e os três campos
+  `CPF/CNPJ ecomm.`, `Nome ecomm` e `Nº Pedido` estão vazios.
+  Havendo dados de ecommerce, emite `ECOMMERCE`; sem dados para
+  classificar, `UNKNOWN`. O método não constitui prova independente
+  do canal de venda.
+- Pendências permanecem identificadas no MEMO pelo sufixo ` - PENDENTE`,
+  sem integrar o saldo liquidado, até a mudança para Pago.
+- `REFNUM` contém um marcador compacto `V3`, status, canal e digests
+  da origem/NSU. A prova de origem detalhada permanece no CSV original
+  arquivado. O histórico V1/V2 continua legível e comparável:
+  não há reescrita retroativa de snapshots existentes.
+
+A formatação é independente de deduplicação (FITID), data de pagamento
+(DTPOSTED), valor líquido (TRNAMT) e tipo de recebimento (CREDIT).
