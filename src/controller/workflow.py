@@ -180,14 +180,32 @@ def planejar(raiz, banco, original, anexos=(), hoje=None, leitor=None, relogio=N
         assinatura_geral = _assinatura(anterior)
     elif historico == geral or (historico and original.suffix.casefold() == '.csv'):
         copia = interpretar_ofx('xml', serializar_ofx(anterior))
-        copia.statements[0].transactions.extend(filtrado.statements[0].transactions)
+        if formato_csv == 'valori':
+            # Pagamento de uma pendência substitui o mesmo FITID no acumulador.
+            txs = copia.statements[0].transactions
+            pos = {tx.fitid: i for i, tx in enumerate(txs)}
+            for tx in filtrado.statements[0].transactions:
+                if tx.fitid in pos:
+                    txs[pos[tx.fitid]] = tx
+                else:
+                    txs.append(tx)
+        else:
+            copia.statements[0].transactions.extend(filtrado.statements[0].transactions)
         if original.suffix.casefold() == '.csv':
             copia.statements[0].bankacctfrom.acctkey = atual.statements[0].bankacctfrom.acctkey
             from decimal import Decimal
             from .ofx_comparison import _validar_transacoes
             statement = copia.statements[0]
             _validar_transacoes(statement.transactions, 'Acumulador CSV')
-            statement.ledgerbal.balamt = sum((t.trnamt for t in statement.transactions), Decimal('0'))
+            if formato_csv == 'valori':
+                from .valori_csv import _metas_sem_saldo
+                estados = _metas_sem_saldo(statement.transactions)
+                statement.ledgerbal.balamt = sum(
+                    (t.trnamt for t in statement.transactions if estados[t.fitid] == 'P'),
+                    Decimal('0'),
+                )
+            else:
+                statement.ledgerbal.balamt = sum((t.trnamt for t in statement.transactions), Decimal('0'))
             if formato_csv == 'valori':
                 statement.banktranlist.dtstart = min(t.dtposted for t in statement.transactions)
             statement.banktranlist.dtend = max(t.dtposted for t in statement.transactions)

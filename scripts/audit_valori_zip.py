@@ -99,7 +99,11 @@ def auditar(arquivo):
             )
             tx = txs[fitid]
             assert tx.fitid == fitid and tx.trnamt == value and tx.trntype == "CREDIT"
-            assert tx.dtposted.date() == day and sale.isoformat() in tx.memo
+            assert tx.dtposted.date() == day and sale.date() <= day
+            assert tx.refnum.startswith("V3") and len(tx.refnum) == 32
+            assert " - " + row["Bandeira"].strip() + " - " in tx.memo
+            assert row["Tipo compra"].strip() in tx.memo
+            assert tx.memo.endswith(" - PENDENTE") == (row["Status"].strip().casefold() == "pendente")
             total += value
             modalidades[row["Tipo compra"].strip().casefold()] += 1
             pares += 1

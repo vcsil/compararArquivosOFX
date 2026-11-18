@@ -23,13 +23,13 @@ Os 21 campos são obrigatórios no cabeçalho, inclusive os opcionais por regist
 | Bandeira | Informação obrigatória da modalidade |
 | Cod. acquirer | Informação opcional do adquirente |
 | Tipo compra | Crédito à Vista, Débito ou Pix |
-| Parcelas | Somente `1`; não há identidade de parcela homologada |
-| Valor total bruto, Valor parcela bruto | Positivos e iguais no contrato atual |
+| Parcelas | `1` para vendas simples; `2` a `99` para Parcelamento sem Juros, com parcelas individualizadas por valor líquido e prova de origem |
+| Valor total bruto, Valor parcela bruto | Positivos; iguais em vendas simples. Em parcelamento, bruto total é maior que bruto por parcela |
 | Valor líquido | Fonte exclusiva de TRNAMT, positivo e não superior ao bruto |
 | Taxa Adm | Decimal com vírgula, informativo; unidade não inferida |
 | Valor tarifa, Valor split | Explicitamente zero neste contrato |
-| Status | Somente Pago |
-| NSU operação | Obrigatório e único, inclusive no Pix |
+| Status | Pago ou Pendente. Pendente aparece no OFX, mas não integra o saldo confirmado |
+| NSU operação | Obrigatório; único em venda simples, compartilhado somente entre parcelas da mesma venda |
 | CPF/CNPJ ecomm., Nome ecomm, Nº Pedido | Opcionais, retidos no CSV; não copiados para OFX |
 | Id do Pix | Obrigatório e único no Pix; vazio em cartão |
 
@@ -57,14 +57,13 @@ As hipóteses de Taxa Adm como porcentagem ou valor monetário não explicam de
 forma uniforme os registros. O programa utiliza o líquido explicitamente
 informado, sem descontar taxas novamente ou criar lançamentos de taxa.
 Tarifa/split não zero exigem contrato confirmado e bloqueiam a importação.
-Pendente, cancelado, estornado, vazio e qualquer status diferente de Pago
-bloqueiam **todo** o arquivo. Não se descartam linhas silenciosamente.
+Cancelado, estornado, vazio e qualquer status diferente de Pago ou Pendente
+bloqueiam **todo** o arquivo. Pendente é lançamento previsto e não aumenta BALAMT até a transição para Pago. Não se descartam linhas silenciosamente.
 
 ## Identificadores e estabelecimento
 
-Cartão usa NSU como FITID. Pix usa `PIX:` + Id do Pix. NSUs iniciados com `PIX:`
-são reservados e rejeitados. NSUs duplicados, IDs Pix duplicados, ausência de ID
-e colisões de NSU entre lotes de cartão/Pix bloqueiam a operação. FITIDs não
+Cartão simples usa NSU como FITID. Parcelamento sem Juros usa `NSU:PARC:` + hash determinístico da identidade e do valor líquido da parcela; parcelas idênticas sem identificador diferenciador continuam bloqueadas. Pix usa `PIX:` + Id do Pix. NSUs iniciados com `PIX:`
+são reservados e rejeitados. NSUs duplicados em vendas simples, IDs Pix duplicados, ausência de ID e colisões entre modalidades bloqueiam a operação. Duas parcelas não podem ter FITID igual; alterações no líquido da parcela modificam sua identidade e exigem conciliação. FITIDs não
 contêm posição da linha, data de processamento ou identificador aleatório.
 Reordenar as linhas conserva os identificadores e os bytes do modelo convertido.
 
@@ -76,7 +75,7 @@ bancária comprovada nem uma conversão do tipo CC. O SHA-256 completo da Loja �
 conferido nos metadados entre lotes; contas não são compartilhadas entre lojas.
 Renomear a Loja exige conciliação, não associação automática.
 
-O MEMO `VALORI:1 ` contém uma lista compacta com SHA-256 completo da Loja,
+Históricos legados usam `VALORI:1 `. O novo MEMO `VALORI:2 ` inclui status, quantidade de parcelas e chave de parcela, além das evidências de origem. O MEMO `VALORI:1 ` contém uma lista compacta com SHA-256 completo da Loja,
 SHA-256 do NSU, SHA-256 dos metadados normalizados de origem, data/hora da venda e
 modalidade (`C`, `D`, `P`). O campo ocupa 237 caracteres, abaixo do limite OFX de
 255. A prova de origem abrange modalidade, datas, bruto, autorização, bandeira,
@@ -99,7 +98,7 @@ vinculação documentada entre loja/conta e conciliação de todo o histórico.
 
 Históricos produzidos pelo próprio fluxo CSV, com identidade e prova de origem
 consistentes, são consolidados em memória a partir de todos os snapshots válidos.
-FITID já conhecido precisa ter mesma data, valor, tipo e metadados de origem.
+FITID já conhecido precisa ter mesma data, valor, tipo e metadados de origem. A transição de Pendente para Pago substitui o registro anterior e passa a integrar o saldo confirmado; regressão para Pendente bloqueia.
 Reimportação gera Limpo vazio e mantém o Geral. Mudanças sob o mesmo identificador,
 identidades secundárias conflitantes, saldo derivado ou período incoerente
 bloqueiam a operação. O saldo é a **soma dos recebimentos importados**, não um
@@ -160,3 +159,40 @@ Nuitka onefile, baseline e comparação no mesmo runner. Smokes testam Rede e Va
 juntas, OFX, XLSX, preservação, reimportação, conflito e recuperação. O inventário
 exige Colorama, conversores e despachante, recusa testes/ferramentas do projeto,
 e os builds verificam o ícone azul e Defender sem desativar proteções.
+
+
+## Apresentação legível OFX (V3)
+
+A geração nova usa `NAME` para o identificador/razão social e `MEMO` para a
+descrição da venda, calculados exclusivamente do CSV, sem publicar dados
+privados nos testes sintéticos:
+
+- `NAME`: prefixo de seis dígitos extraído de `POS` com o layout
+  `NNNNNNNN` (`NNNNNN` é a identificação do estabelecimento), seguido
+  de ` - ` e a `Loja`. Sem prefixo inequívoco, usa somente o texto da loja.
+  O campo OFX NAME permite **32 caracteres**; valores mais longos são
+  truncados apenas para exibição. Para a loja do pacote privado, a forma
+  solicitada `639224 - RENATA WIST ACESSORIOS LTDA` tem 36 caracteres;
+  o NAME OFX compatível é
+  `639224 - RENATA WIST ACESSORIOS`.
+- `MEMO`: `Parcel 1/1 - Crédito à Vista - VISA - PHYSICAL`,
+  com `Parcel` + quantidade de parcelas, `Tipo compra`, `Bandeira`
+  e canal. Só é possível atribuir `1/1` quando `Parcelas=1`.
+  **O CSV não possui o ordinal das parcelas de uma venda em 2x**:
+  escrevemos `Parcel ?/2`, sem inventar 1ª/2ª parcela ou associá-las
+  por ordem de linha ou valor líquido.
+- `PHYSICAL` é uma **classificação operacional derivada**, não um campo
+  explícito do CSV: emitida quando há POS e os três campos
+  `CPF/CNPJ ecomm.`, `Nome ecomm` e `Nº Pedido` estão vazios.
+  Havendo dados de ecommerce, emite `ECOMMERCE`; sem dados para
+  classificar, `UNKNOWN`. O método não constitui prova independente
+  do canal de venda.
+- Pendências permanecem identificadas no MEMO pelo sufixo ` - PENDENTE`,
+  sem integrar o saldo liquidado, até a mudança para Pago.
+- `REFNUM` contém um marcador compacto `V3`, status, canal e digests
+  da origem/NSU. A prova de origem detalhada permanece no CSV original
+  arquivado. O histórico V1/V2 continua legível e comparável:
+  não há reescrita retroativa de snapshots existentes.
+
+A formatação é independente de deduplicação (FITID), data de pagamento
+(DTPOSTED), valor líquido (TRNAMT) e tipo de recebimento (CREDIT).
