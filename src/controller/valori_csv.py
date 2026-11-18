@@ -394,7 +394,9 @@ def _metas(model):
             if modalidade == "S":
                 if not v2 or not 2 <= int(parcelas) <= 99 or not re.fullmatch(r"[0-9a-f]{24}", chave):
                     raise ValueError("Identidade de parcela inválida")
-                if t.fitid != nsu + PARCELA_SEPARADOR + chave:
+                if (PARCELA_SEPARADOR not in t.fitid or
+                    not t.fitid.endswith(PARCELA_SEPARADOR + chave) or
+                    _sha(t.fitid.rsplit(PARCELA_SEPARADOR, 1)[0]) != nsu):
                     raise ValueError("FITID de parcela inconsistente")
             elif chave or parcelas != "1":
                 raise ValueError("Metadados de parcela inesperados")
