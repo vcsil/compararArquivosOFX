@@ -122,12 +122,31 @@ class Compatibilidade(unittest.TestCase):
         from controller.organization import proxima_importacao
         folder=self.bank/'dia';folder.mkdir();(folder/'01').mkdir()
         self.assertEqual(proxima_importacao(folder).name,'002')
-    def test_legado_no_mesmo_dia_nao_cria_dois_gerais(self):
-        hist=self.historico('11 - Nov 2026/2026-11-12')
-        src=self.root/'novo.ofx';src.write_bytes(fixture([A]))
-        with self.assertRaisesRegex(OrganizacaoError,'mesmo dia'):
-            planejar(self.root,self.bank,src,hoje=date(2026,11,12))
-        self.assertTrue(src.exists());self.assertEqual(hist.read_bytes(),fixture([A]))
+    def test_legado_no_mesmo_dia_reutiliza_geral_e_recupera(self):
+        hist = self.historico('2026/11 - Novembro/2026-11-12',
+                              name='Bradesco Geral - 2026-11-12.ofx').resolve()
+        src = self.root / 'novo.ofx'
+        raw = fixture([A, ('20230103120000', '10', 'NEW', 'Novo')])
+        src.write_bytes(raw)
+        plano = planejar(self.root, self.bank, src, hoje=date(2026, 11, 12))
+        self.assertEqual(plano.geral, hist)
+        self.assertEqual(plano.importacao, hist.parent / '002')
+        publicar = ss.publicar_arquivo
+
+        def interromper(*args):
+            publicar(*args)
+            raise OSError('interrupção após trocar o Geral')
+
+        with patch.object(ss, 'publicar_arquivo', side_effect=interromper), self.assertRaises(OSError):
+            executar(plano)
+        self.assertTrue(src.exists())
+        ss.recuperar_concluida(self.bank)
+        self.assertFalse(src.exists())
+        self.assertEqual((plano.importacao / src.name).read_bytes(), raw)
+        self.assertEqual(list(hist.parent.glob('*.ofx')), [hist])
+        _, modelo = carregar_ofx(hist)
+        self.assertEqual([t.fitid for t in modelo.statements[0].transactions], ['2', 'NEW'])
+
     def test_geral_data_divergente_ou_multiplo_nao_e_escolhido(self):
         hist=self.historico('2026/11 - Nov 2026/2026-11-12',name='OFXGeral-2026-11-11.ofx')
         with self.assertRaises(OrganizacaoError):localizar_historico(self.bank,D)
@@ -166,6 +185,7 @@ class Compatibilidade(unittest.TestCase):
         src=self.root/'novo.ofx';raw=fixture([('20230102120000','21','2','Conflito')]);src.write_bytes(raw)
         with self.assertRaises(OrganizacaoError):planejar(self.root,self.bank,src,hoje=D)
         self.assertEqual(src.read_bytes(),raw);self.assertEqual(hist.read_bytes(),fixture([A]))
+    @unittest.skipIf(os.name == 'nt', 'Windows usa mutex do kernel, sem lock no volume')
     def test_lock_zero_links_falha_segura_e_hardlink_real_rejeitado(self):
         real=os.fstat
         def zero(fd):
@@ -178,11 +198,10 @@ class Compatibilidade(unittest.TestCase):
         lock=next((self.root/'.comparaofx-locks').iterdir());os.link(lock,self.root/'alias.lock')
         with self.assertRaisesRegex(OrganizacaoError,'hardlinks'):
             with ss.bloquear(self.bank):pass
-    def test_onedrive_identificado_bloqueia_sem_promessa_entre_dispositivos(self):
+    def test_onedrive_nome_nao_substitui_verificacao_de_capacidades(self):
         with patch.dict(os.environ, {'OneDrive': str(self.root)}):
-            with self.assertRaisesRegex(OrganizacaoError,'entre dispositivos'):
-                with ss.bloquear(self.bank):pass
-        self.assertFalse((self.root/'.comparaofx-locks').exists())
+            with ss.bloquear(self.bank) as token:
+                self.assertTrue(ss.bloqueio_valido(token, self.bank.resolve()))
     def test_lock_concorrente_entre_processos_e_preexistente(self):
         # O filho mantém o lock até receber uma linha, sem depender de sleeps.
         code="""import sys

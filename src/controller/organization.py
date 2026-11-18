@@ -1,4 +1,6 @@
 """Descoberta e planejamento de arquivos, sem acesso fora da raiz escolhida."""
+from calendar import monthrange
+from collections import defaultdict
 from datetime import date
 from pathlib import Path
 import os
@@ -32,8 +34,13 @@ def link_inseguro(path):
         info = path.lstat()
     except FileNotFoundError:
         return False
-    return (path.is_symlink() or bool(getattr(info, 'st_file_attributes', 0)
-                                     & getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0)))
+    reparse = bool(getattr(info, 'st_file_attributes', 0)
+                   & getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0))
+    # Cloud placeholders não redirecionam nomes. Junctions, symlinks e tags
+    # desconhecidas continuam recusados. A leitura hidrata o arquivo e é hasheada.
+    tag = getattr(info, 'st_reparse_tag', 0)
+    cloud = (tag & 0xFFFF0FFF) == 0x9000001A
+    return path.is_symlink() or (reparse and not cloud)
 
 
 def caminho_direto(raiz, caminho):
@@ -227,6 +234,123 @@ def historicos_validos(banco, hoje):
     return sorted(candidatos, key=lambda item: item[0])
 
 
+def _mes_historico(nome, ano=None):
+    """Devolve o último dia de um mês com nome e ano reconhecidos."""
+    for mes, (abreviado, extenso) in enumerate(zip(MESES, MESES_EXTENSO), 1):
+        if ano is not None and nome == f'{mes:02d} - {extenso}':
+            return date(ano, mes, monthrange(ano, mes)[1])
+        prefixo = f'{mes:02d} - {abreviado} '
+        if nome.startswith(prefixo) and re.fullmatch(r'[0-9]{4}', nome[len(prefixo):]):
+            ano_mes = int(nome[len(prefixo):])
+            if ano_mes and (ano is None or ano == ano_mes):
+                return date(ano_mes, mes, monthrange(ano_mes, mes)[1])
+    return None
+
+
+def _indice_dias(banco):
+    """Lista só os níveis de ano/mês. Nunca abre uma pasta de importação."""
+    indice = defaultdict(list)
+
+    def registrar(pasta, limite, erro):
+        indice[limite].append((pasta, erro))
+
+    def data_explicita(entrada, limite):
+        if re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}', entrada.name):
+            try:
+                return date.fromisoformat(entrada.name)
+            except ValueError:
+                pass
+        return limite
+
+    def listar_mes(mes, limite):
+        if link_inseguro(mes) or not mes.is_dir():
+            registrar(mes, limite, 'mês não é um diretório seguro')
+            return
+        for dia in mes.iterdir():
+            try:
+                data = data_diretorio_historico(banco, dia)
+            except OrganizacaoError as exc:
+                registrar(dia, data_explicita(dia, limite), str(exc))
+            else:
+                registrar(dia, data, None)
+
+    for entrada in banco.iterdir():
+        if entrada.name == '.comparaofx' and not link_inseguro(entrada) and entrada.is_dir():
+            continue  # pendências são verificadas separadamente por safe_storage
+        if banco.name.casefold() == 'rede' and entrada.name == '.rede.json' and _regular(entrada):
+            continue
+        if re.fullmatch(r'[0-9]{4}', entrada.name) and int(entrada.name):
+            ano = int(entrada.name)
+            limite = date(ano, 12, 31)
+            if link_inseguro(entrada) or not entrada.is_dir():
+                registrar(entrada, limite, 'ano não é um diretório seguro')
+                continue
+            for mes in entrada.iterdir():
+                ultimo = _mes_historico(mes.name, ano)
+                if ultimo:
+                    listar_mes(mes, ultimo)
+                else:
+                    registrar(mes, data_explicita(mes, limite), 'mês desconhecido')
+        else:
+            ultimo = _mes_historico(entrada.name)
+            if ultimo:
+                listar_mes(entrada, ultimo)
+            else:
+                registrar(entrada, data_explicita(entrada, date.max), 'entrada fora da hierarquia reconhecida')
+    return indice
+
+
+def _geral_do_dia(banco, dia):
+    if link_inseguro(dia) or not dia.is_dir():
+        raise OrganizacaoError('pasta diária não é um diretório seguro')
+    gerais = []
+    numeros = set()
+    nomes = set()
+    for item in dia.iterdir():
+        nome = item.name.casefold()
+        if nome in nomes or link_inseguro(item):
+            raise OrganizacaoError('colisão de nomes ou link inseguro na pasta diária')
+        nomes.add(nome)
+        if item.is_dir():
+            if not re.fullmatch(r'[0-9]{2,3}', nome) or not int(nome) or int(nome) in numeros:
+                raise OrganizacaoError('numeração de importação inválida ou ambígua')
+            numeros.add(int(nome))
+            anexos_vistos = set()
+            for arquivo in item.iterdir():
+                chave = arquivo.name.casefold()
+                if chave in anexos_vistos or not _regular(arquivo):
+                    raise OrganizacaoError(f'arquivo inseguro ou nome duplicado em {item.name}')
+                anexos_vistos.add(chave)
+        elif not item.is_file():
+            raise OrganizacaoError('entrada não regular na pasta diária')
+        elif nome.startswith(('ofxgeral-', 'bradesco geral - ')) and nome.endswith('.ofx'):
+            validar_historico_relativo(banco, item.relative_to(banco))
+            gerais.append(item)
+    if nomes and len(gerais) != 1:
+        raise OrganizacaoError('Geral ausente ou ambíguo; exige conciliação manual')
+    return gerais[0] if gerais else None
+
+
 def localizar_historico(banco, hoje):
-    candidatos = historicos_validos(banco, hoje)
-    return candidatos[-1][1] if candidatos else None
+    """Valida a janela até a primeira referência, preservando os dias antigos."""
+    banco = Path(banco)
+    indice = _indice_dias(banco)
+    for data in sorted(indice, reverse=True):
+        gerais = []
+        for dia, erro in sorted(indice[data]):
+            try:
+                if erro:
+                    raise OrganizacaoError(erro)
+                geral = _geral_do_dia(banco, dia)
+                if geral:
+                    if data > hoje:
+                        raise OrganizacaoError('histórico com data futura')
+                    gerais.append(geral)
+            except (OrganizacaoError, OSError) as exc:
+                raise OrganizacaoError(f'Histórico {dia.relative_to(banco)}: {exc}') from exc
+        if len(gerais) > 1:
+            caminhos = ', '.join(str(p.relative_to(banco)) for p in gerais)
+            raise OrganizacaoError(f'Histórico {data}: mais de um Geral ({caminhos})')
+        if gerais:
+            return gerais[0]
+    return None
