@@ -25,6 +25,7 @@ from .organization import OrganizacaoError
 
 PREFIXO_META = "VALORI:1 "
 PREFIXO_META_V2 = "VALORI:2 "
+REFNUM_V3 = re.compile(r"^[PN][FEU][0-9a-f]{30}$")
 PARCELA_SEPARADOR = ":PARC:"
 MODALIDADES = {"credito a vista": "Crédito à Vista", "debito": "Débito", "pix": "Pix", "parcelamento sem juros": "Parcelamento sem Juros"}
 BANKID = "000"  # Conta virtual do livro de liquidações, não um código bancário real.
@@ -217,12 +218,28 @@ def ler_transacoes(path):
                     "data": pagamento.date(),
                     "meta": meta,
                     "chave_parcela": chave,
+                    "canal": ("ECOMMERCE" if any(
+                        get(k, False) for k in ("CPF/CNPJ ecomm.", "Nome ecomm", "Nº Pedido")
+                    ) else "PHYSICAL" if get("POS", False) else "UNKNOWN"),
                 }
             )
     except csv.Error as exc:
         raise ValueError("CSV Valori malformado") from exc
     if not txs:
         raise ValueError("CSV Valori sem movimentações")
+    # Um identificador de 8 dígitos de terminal, quando presente, permite
+    # identificar o prefixo de seis dígitos utilizado pelo estabelecimento.
+    # Nunca aplicar o código de uma loja a outra ou inventá-lo se estiver ausente.
+    codigos = {
+        m.group(1)
+        for t in txs
+        if (m := re.fullmatch(r"([0-9]{6})[0-9]{2}", t["meta"]["pos"]))
+    }
+    if len(codigos) > 1:
+        raise ValueError("CSV Valori: prefixos de estabelecimento divergentes no POS")
+    codigo = next(iter(codigos)) if codigos else ""
+    for t in txs:
+        t["codigo_loja"] = codigo
     txs.sort(key=lambda t: (t["data"], t["fitid"]))
     return txs
 
@@ -252,6 +269,42 @@ def metadados(t):
         meta["parcelas"],
         t["chave_parcela"],
     ]
+
+
+
+def _refnum_v3(t):
+    """Prova de origem compacta em REFNUM (32), fora do MEMO visível."""
+    meta = t["meta"]
+    origem = json.dumps(
+        {k: v for k, v in meta.items() if k != "status"},
+        ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+    )
+    canal = {"PHYSICAL": "F", "ECOMMERCE": "E", "UNKNOWN": "U"}[t["canal"]]
+    status = "P" if meta["status"] == "Pago" else "N"
+    return status + canal + _sha(origem)[:14] + _sha(meta["nsu"])[:16]
+
+
+def _descricao_memo(t):
+    meta = t["meta"]
+    parcelas = meta["parcelas"]
+    # O CSV só informa o total, não o ordinal. Nunca fabricar '1/2' ou '2/2'.
+    indice = "1" if parcelas == "1" else "?"
+    memo = (
+        f'Parcel {indice}/{parcelas} - {meta["modalidade"]}'
+        f' - {meta["bandeira"]} - {t["canal"]}'
+    )
+    if meta["status"] == "Pendente":
+        memo += " - PENDENTE"
+    if len(memo) > 255:
+        raise ValueError("CSV Valori: MEMO excede limite OFX")
+    return memo
+
+
+def _nome_exibicao(t):
+    meta = t["meta"]
+    nome = (f'{t["codigo_loja"]} - ' if t["codigo_loja"] else "") + meta["loja"]
+    # OFX NAME é A-32; não escrever valor fora da especificação.
+    return nome[:32].rstrip()
 
 
 def montar_modelo(txs):
@@ -310,18 +363,9 @@ def montar_modelo(txs):
         sub(node, "DTPOSTED", t["data"].strftime("%Y%m%d"))
         sub(node, "TRNAMT", str(t["valor"]))
         sub(node, "FITID", t["fitid"])
-        status = t["meta"]["status"]
-        nome = t["meta"]["modalidade"] if status == "Pago" else (
-            "Pendente - Parcelado" if t["meta"]["modalidade"] == "Parcelamento sem Juros"
-            else "Pendente - " + t["meta"]["modalidade"]
-        )
-        sub(node, "NAME", nome)
-        dados_meta = metadados(t)
-        prefixo = PREFIXO_META if len(dados_meta) == 5 else PREFIXO_META_V2
-        memo = prefixo + json.dumps(dados_meta, separators=(",", ":"))
-        if len(memo) > 255:
-            raise ValueError("CSV Valori: MEMO excede limite OFX")
-        sub(node, "MEMO", memo)
+        sub(node, "REFNUM", _refnum_v3(t))
+        sub(node, "NAME", _nome_exibicao(t))
+        sub(node, "MEMO", _descricao_memo(t))
     ledger = sub(stmt, "LEDGERBAL")
     # O livro virtual registra pendências, mas o saldo é apenas o recebido.
     sub(ledger, "BALAMT", sum(
