@@ -578,8 +578,8 @@ def analisar_lotes(atual, anterior=None):
         oldtx = anterior.statements[0].transactions
         oldids = _validar_transacoes(oldtx, "Histórico Valori")
         oldmeta = _metas(anterior)
-        if {m["loja"] for m in meta.values()} != {m["loja"] for m in oldmeta.values()}:
-            raise ValueError("Identidade completa de loja Valori divergente")
+        if {m["loja"][:19] for m in meta.values()} != {m["loja"][:19] for m in oldmeta.values()}:
+            raise ValueError("Identidade de loja Valori divergente")
         oldnsu = {}
         for k, m in oldmeta.items():
             oldnsu.setdefault(m["nsu"], set()).add(k)
@@ -598,7 +598,10 @@ def analisar_lotes(atual, anterior=None):
             if old is not None:
                 om = oldmeta[t.fitid]
                 campos = ("loja", "nsu", "pix", "modalidade", "parcelas", "chave")
-                metadados_iguais = all(m[c] == om[c] for c in campos) and (
+                metadados_iguais = all(
+                    (m[c][:19] == om[c][:19] if c == "loja" else m[c] == om[c])
+                    for c in campos
+                ) and (
                     not m["venda"] or not om["venda"] or m["venda"] == om["venda"]
                 )
                 # V1 conserva o hash completo da origem; V2 guarda seu prefixo.
