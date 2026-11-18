@@ -135,7 +135,6 @@ class ValoriCSV(unittest.TestCase):
 
     def test_status_nao_pago_bloqueia_arquivo_inteiro(self):
         for status in (
-            "Pendente",
             "Cancelado",
             "Estornado",
             "Revertido",
@@ -144,6 +143,66 @@ class ValoriCSV(unittest.TestCase):
         ):
             with self.subTest(status=status), self.assertRaises(ValueError):
                 self.modelo(linha("A"), linha("B", Status=status))
+
+    def test_pendentes_e_parcelas_distintas_no_mesmo_csv(self):
+        a = linha("PENDING-A", Status="Pendente")
+        b = linha("PENDING-B", Status="Pendente")
+        comum = dict(
+            **{
+                "Tipo compra": "Parcelamento sem Juros",
+                "Parcelas": "2",
+                "Valor total bruto": "210,00",
+                "Valor parcela bruto": "105,00",
+            }
+        )
+        p1 = linha("PARCELADO", **{**comum, "Valor líquido": "100,40"})
+        p2 = linha("PARCELADO", **{**comum, "Valor líquido": "98,71"})
+        model = self.modelo(a, p1, b, p2)
+        txs = model.statements[0].transactions
+        self.assertEqual(len(txs), 4)
+        self.assertEqual(len({t.fitid for t in txs}), 4)
+        parcelas = [t for t in txs if ":PARC:" in t.fitid]
+        self.assertEqual({t.trnamt for t in parcelas}, {Decimal("100.40"), Decimal("98.71")})
+        self.assertEqual(model.statements[0].ledgerbal.balamt, Decimal("199.11"))
+        self.assertEqual(sum(t.name.startswith("Pendente - ") for t in txs), 2)
+        from controller.valori_csv import _metas
+        self.assertEqual(len(_metas(model)), 4)
+        self.assertEqual(
+            serializar_ofx(self.modelo(p2, b, p1, a)),
+            serializar_ofx(model),
+        )
+
+    def test_pendente_que_vira_pago_substitui_sem_duplicar(self):
+        pendente = linha("STATUS-1", Status="Pendente")
+        pago = linha("STATUS-1", Status="Pago")
+        first = self.modelo(pendente)
+        second = self.modelo(pago)
+        result = analisar_lotes(second, first)
+        self.assertEqual(result.relatorio.estado, "APROVADO")
+        self.assertEqual(result.relatorio.novas.quantidade, 0)
+        self.assertEqual(result.indices_novos, (0,))
+        from controller.valori_csv import consolidar_historicos
+        merged = consolidar_historicos([first, second])
+        self.assertEqual(len(merged.statements[0].transactions), 1)
+        self.assertEqual(merged.statements[0].ledgerbal.balamt, Decimal("970.25"))
+        self.assertEqual(
+            analisar_lotes(first, second).relatorio.estado, "BLOQUEADO"
+        )
+
+    def test_fluxo_publica_entrada_com_pendentes_e_liquida_depois(self):
+        src = self.criar(linha("STATUS-2", Status="Pendente"))
+        first = planejar(self.root, self.bank, src, hoje=self.day)
+        executar(first)
+        self.assertEqual(
+            carregar_ofx(first.geral)[1].statements[0].ledgerbal.balamt,
+            Decimal("0"),
+        )
+        src = self.criar(linha("STATUS-2", Status="Pago"))
+        second = planejar(self.root, self.bank, src, hoje=date(2026, 11, 15))
+        executar(second)
+        ledger = carregar_ofx(second.geral)[1]
+        self.assertEqual(len(ledger.statements[0].transactions), 1)
+        self.assertEqual(ledger.statements[0].ledgerbal.balamt, Decimal("970.25"))
 
     def test_recusa_duplicados_de_nsu_e_pix(self):
         for rows in (
