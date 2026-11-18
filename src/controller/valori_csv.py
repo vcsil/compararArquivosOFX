@@ -235,8 +235,8 @@ def metadados(t):
     # Lista compacta: preserva a prova da origem sem ultrapassar MEMO(255).
     # Descrições completas e dados opcionais ficam no CSV original arquivado.
     meta = t["meta"]
-    origem = json.dumps(meta, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    modalidade = {"Crédito à Vista": "C", "Débito": "D", "Pix": "P"}[meta["modalidade"]]
+    origem = json.dumps({k: v for k, v in meta.items() if k != "status"}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    modalidade = {"Crédito à Vista": "C", "Débito": "D", "Pix": "P", "Parcelamento sem Juros": "S"}[meta["modalidade"]]
     comuns = [
         _sha(meta["loja"]),
         _sha(meta["nsu"]),
@@ -244,8 +244,6 @@ def metadados(t):
         meta["venda"],
         modalidade,
     ]
-    if meta["status"] == "Pago" and meta["parcelas"] == "1":
-        return comuns  # Compatibilidade de bytes com os históricos Valori antigos.
     # MEMO OFX tem limite de 255 caracteres: hash de origem com 128 bits
     # para registrar estado, quantidade e chave da parcela.
     comuns[2] = comuns[2][:32]
