@@ -24,7 +24,9 @@ from .ofx_comparison import (
 from .organization import OrganizacaoError
 
 PREFIXO_META = "VALORI:1 "
-MODALIDADES = {"credito a vista": "Crédito à Vista", "debito": "Débito", "pix": "Pix"}
+PREFIXO_META_V2 = "VALORI:2 "
+PARCELA_SEPARADOR = ":PARC:"
+MODALIDADES = {"credito a vista": "Crédito à Vista", "debito": "Débito", "pix": "Pix", "parcelamento sem juros": "Parcelamento sem Juros"}
 BANKID = "000"  # Conta virtual do livro de liquidações, não um código bancário real.
 
 
@@ -83,8 +85,9 @@ def ler_transacoes(path):
     )
     txs = []
     lojas = set()
-    nsus = set()
+    nsus = {}
     pixids = set()
+    fitids = set()
     try:
         for row in reader:
             n = reader.line_num
@@ -106,10 +109,9 @@ def ler_transacoes(path):
                     )
                 return v
 
-            if normalizar(get("Status")) != "pago":
-                raise ValueError(
-                    "CSV Valori: status pendente, cancelado, estornado ou desconhecido; arquivo inteiro bloqueado"
-                )
+            status = normalizar(get("Status"))
+            if status not in ("pago", "pendente"):
+                raise ValueError("CSV Valori: status não homologado")
             loja = unicodedata.normalize("NFC", get("Loja"))
             lojas.add(loja)
             if len(lojas) != 1:
@@ -121,10 +123,15 @@ def ler_transacoes(path):
             modalidade = normalizar(get("Tipo compra"))
             if modalidade not in MODALIDADES:
                 raise ValueError("CSV Valori: modalidade não homologada")
-            if get("Parcelas") != "1":
-                raise ValueError(
-                    "CSV Valori: parcelamento sem identificação da parcela não é suportado"
-                )
+            parcelas = get("Parcelas")
+            parcelado = modalidade == "parcelamento sem juros"
+            if not parcelas.isascii() or not parcelas.isdecimal():
+                raise ValueError("CSV Valori: quantidade de parcelas inválida")
+            numero_parcelas = int(parcelas)
+            if (parcelado and not 2 <= numero_parcelas <= 99) or (
+                not parcelado and numero_parcelas != 1
+            ):
+                raise ValueError("CSV Valori: modalidade e número de parcelas incompatíveis")
             liquido = _valor(get("Valor líquido"), "valor líquido", n, True)
             bruto = _valor(get("Valor parcela bruto"), "valor parcela bruto", n, True)
             total = _valor(get("Valor total bruto"), "valor total bruto", n, True)
@@ -134,10 +141,10 @@ def ler_transacoes(path):
                 raise ValueError(
                     "CSV Valori: tarifa/split não zero exige contrato financeiro confirmado"
                 )
-            if total != bruto or liquido > bruto:
-                raise ValueError(
-                    "CSV Valori: relação bruto/parcela/líquido não homologada"
-                )
+            if liquido > bruto or (not parcelado and total != bruto) or (
+                parcelado and (bruto >= total or total <= 0)
+            ):
+                raise ValueError("CSV Valori: relação bruto/parcela/líquido inválida")
             taxa = get("Taxa Adm")
             if not re.fullmatch(r"\d+(?:,\d+)?", taxa):
                 raise ValueError(
@@ -145,24 +152,23 @@ def ler_transacoes(path):
                 )
             nsu = get("NSU operação")
             pix = get("Id do Pix", False)
-            if nsu in nsus or nsu.startswith("PIX:"):
-                raise ValueError(
-                    "CSV Valori: NSU duplicado ou reservado; identificador ambíguo"
-                )
-            nsus.add(nsu)
+            if nsu.startswith("PIX:") or PARCELA_SEPARADOR in nsu:
+                raise ValueError("CSV Valori: NSU reservado; identificador ambíguo")
+            if nsu in nsus:
+                anterior = nsus[nsu]
+                if not parcelado or anterior["modalidade"] != modalidade or anterior["parcelas"] != parcelas:
+                    raise ValueError("CSV Valori: NSU duplicado em modalidades incompatíveis")
+                if len(anterior["fitids"]) >= numero_parcelas:
+                    raise ValueError("CSV Valori: parcelas excedem a quantidade declarada")
             if modalidade == "pix":
                 if not pix or pix in pixids:
                     raise ValueError("CSV Valori: Id do Pix ausente ou duplicado")
                 pixids.add(pix)
                 fitid = "PIX:" + pix
+            elif pix:
+                raise ValueError("CSV Valori: Id do Pix em modalidade não Pix")
             else:
-                if pix:
-                    raise ValueError(
-                        "CSV Valori: Id do Pix em modalidade de cartão é ambíguo"
-                    )
                 fitid = nsu
-            if len(fitid) > 255:
-                raise ValueError("CSV Valori: identificador excede limite OFX")
             meta = {
                 "loja": loja,
                 "nsu": nsu,
@@ -175,17 +181,42 @@ def ler_transacoes(path):
                 "bruto": f"{bruto:.2f}",
                 "pos": get("POS", False),
                 "adquirente": get("Cod. acquirer", False),
-                "parcelas": get("Parcelas"),
+                "parcelas": parcelas,
                 "taxa_adm": taxa,
                 "tarifa": f"{tarifa:.2f}",
                 "split": f"{split:.2f}",
+                "status": "Pago" if status == "pago" else "Pendente",
             }
+            if parcelado:
+                meta["total_bruto"] = f"{total:.2f}"
+                # O NSU identifica a venda, não a parcela. Não depender da
+                # posição da linha: líquidos distintos identificam parcelas
+                # sem inventar números que o relatório não informa.
+                prova = {
+                    "origem": {k: v for k, v in meta.items() if k not in ("pagamento", "status")},
+                    "liquido": f"{liquido:.2f}",
+                }
+                chave = hashlib.sha256(
+                    json.dumps(prova, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                ).hexdigest()[:24]
+                fitid = nsu + PARCELA_SEPARADOR + chave
+            else:
+                chave = ""
+            if fitid in fitids:
+                raise ValueError("CSV Valori: FITID de parcela repetido ou linha duplicada")
+            if len(fitid) > 255:
+                raise ValueError("CSV Valori: identificador excede limite OFX")
+            fitids.add(fitid)
+            if nsu not in nsus:
+                nsus[nsu] = {"modalidade": modalidade, "parcelas": parcelas, "fitids": set()}
+            nsus[nsu]["fitids"].add(fitid)
             txs.append(
                 {
                     "fitid": fitid,
                     "valor": liquido,
                     "data": pagamento.date(),
                     "meta": meta,
+                    "chave_parcela": chave,
                 }
             )
     except csv.Error as exc:
@@ -206,12 +237,22 @@ def metadados(t):
     meta = t["meta"]
     origem = json.dumps(meta, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     modalidade = {"Crédito à Vista": "C", "Débito": "D", "Pix": "P"}[meta["modalidade"]]
-    return [
+    comuns = [
         _sha(meta["loja"]),
         _sha(meta["nsu"]),
         _sha(origem),
         meta["venda"],
         modalidade,
+    ]
+    if meta["status"] == "Pago" and meta["parcelas"] == "1":
+        return comuns  # Compatibilidade de bytes com os históricos Valori antigos.
+    # MEMO OFX tem limite de 255 caracteres: hash de origem com 128 bits
+    # para registrar estado, quantidade e chave da parcela.
+    comuns[2] = comuns[2][:32]
+    return comuns + [
+        "P" if meta["status"] == "Pago" else "N",
+        meta["parcelas"],
+        t["chave_parcela"],
     ]
 
 
@@ -271,12 +312,20 @@ def montar_modelo(txs):
         sub(node, "DTPOSTED", t["data"].strftime("%Y%m%d"))
         sub(node, "TRNAMT", str(t["valor"]))
         sub(node, "FITID", t["fitid"])
-        sub(node, "NAME", t["meta"]["modalidade"])
-        sub(
-            node, "MEMO", PREFIXO_META + json.dumps(metadados(t), separators=(",", ":"))
-        )
+        status = t["meta"]["status"]
+        sub(node, "NAME", t["meta"]["modalidade"] if status == "Pago"
+            else "Pendente - " + t["meta"]["modalidade"])
+        dados_meta = metadados(t)
+        prefixo = PREFIXO_META if len(dados_meta) == 5 else PREFIXO_META_V2
+        memo = prefixo + json.dumps(dados_meta, separators=(",", ":"))
+        if len(memo) > 255:
+            raise ValueError("CSV Valori: MEMO excede limite OFX")
+        sub(node, "MEMO", memo)
     ledger = sub(stmt, "LEDGERBAL")
-    sub(ledger, "BALAMT", sum((t["valor"] for t in txs), Decimal("0")))
+    # O livro virtual registra pendências, mas o saldo é apenas o recebido.
+    sub(ledger, "BALAMT", sum(
+        (t["valor"] for t in txs if t["meta"]["status"] == "Pago"), Decimal("0")
+    ))
     sub(ledger, "DTASOF", max(t["data"] for t in txs).strftime("%Y%m%d"))
     return interpretar_ofx("xml", ET.tostring(root, encoding="utf-8"))
 
