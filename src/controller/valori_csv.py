@@ -355,81 +355,94 @@ def carregar_historico(path):
 def _metas(model):
     conta = identificar_conta(model)
     if (conta.banco, conta.tipo, conta.moeda, conta.instituicao, conta.fid) != (
-        BANKID,
-        "CHECKING",
-        "BRL",
-        "VALORI",
-        "VALORI",
+        BANKID, "CHECKING", "BRL", "VALORI", "VALORI"
     ):
         raise ValueError("Histórico Valori não pertence ao livro de liquidações CSV")
     if model.statements[0].bankacctfrom.branchid is not None:
         raise ValueError("Agência bancária inesperada no livro Valori CSV")
     result = {}
-    nsus = set()
+    nsus = {}
     pixs = set()
     lojas = set()
     for t in model.statements[0].transactions:
-        if not t.memo or not t.memo.startswith(PREFIXO_META):
+        if not t.memo:
             raise ValueError("Histórico Valori sem metadados de origem verificáveis")
+        v2 = t.memo.startswith(PREFIXO_META_V2)
+        if not v2 and not t.memo.startswith(PREFIXO_META):
+            raise ValueError("Histórico Valori sem metadados de origem verificáveis")
+        prefixo = PREFIXO_META_V2 if v2 else PREFIXO_META
         try:
-            meta = json.loads(t.memo[len(PREFIXO_META) :])
+            meta = json.loads(t.memo[len(prefixo):])
             if (
                 not isinstance(meta, list)
-                or len(meta) != 5
+                or len(meta) != (8 if v2 else 5)
                 or any(not isinstance(v, str) for v in meta)
-                or any(not re.fullmatch(r"[0-9a-f]{64}", v) for v in meta[:3])
-                or meta[4] not in ("C", "D", "P")
+                or any(not re.fullmatch(r"[0-9a-f]{64}", v) for v in meta[:2])
+                or not re.fullmatch(r"[0-9a-f]{32}" if v2 else r"[0-9a-f]{64}", meta[2])
+                or meta[4] not in ("C", "D", "P", "S")
             ):
                 raise ValueError("Metadados Valori inválidos")
-            loja, nsu, origem, venda, modalidade = meta
+            loja, nsu, origem, venda, modalidade = meta[:5]
+            status = meta[5] if v2 else "P"
+            parcelas = meta[6] if v2 else "1"
+            chave = meta[7] if v2 else ""
+            if status not in ("P", "N") or not parcelas.isascii() or not parcelas.isdecimal():
+                raise ValueError("Status ou parcelas Valori inválidos")
+            if modalidade == "S":
+                if not v2 or not 2 <= int(parcelas) <= 99 or not re.fullmatch(r"[0-9a-f]{24}", chave):
+                    raise ValueError("Identidade de parcela inválida")
+                if t.fitid != nsu + PARCELA_SEPARADOR + chave:
+                    raise ValueError("FITID de parcela inconsistente")
+            elif chave or parcelas != "1":
+                raise ValueError("Metadados de parcela inesperados")
             instante = datetime.strptime(venda, "%Y-%m-%dT%H:%M:%S")
             if (
                 "VLR" + loja[:19] != conta.conta
                 or t.trntype != "CREDIT"
                 or t.trnamt <= 0
                 or instante.date() > t.dtposted.date()
+                or (status == "N") != t.name.startswith("Pendente - ")
             ):
                 raise ValueError("Identidade financeira Valori incompatível")
             lojas.add(loja)
-            pix = (
-                t.fitid[4:] if modalidade == "P" and t.fitid.startswith("PIX:") else ""
-            )
+            pix = t.fitid[4:] if modalidade == "P" and t.fitid.startswith("PIX:") else ""
             if (
-                nsu in nsus
+                len(lojas) > 1 or (modalidade == "P" and not pix)
                 or (pix and pix in pixs)
-                or len(lojas) > 1
-                or (modalidade == "P" and not pix)
-                or (
-                    modalidade != "P"
-                    and (t.fitid.startswith("PIX:") or _sha(t.fitid) != nsu)
-                )
+                or (modalidade != "P" and (
+                    (modalidade != "S" and _sha(t.fitid) != nsu)
+                    or t.fitid.startswith("PIX:")
+                ))
+                or (nsu in nsus and (modalidade != "S" or nsus[nsu] != "S"))
             ):
                 raise ValueError("Identificador Valori ambíguo no histórico")
-            nsus.add(nsu)
+            nsus[nsu] = modalidade
             if pix:
                 pixs.add(pix)
             result[t.fitid] = {
-                "loja": loja,
-                "nsu": nsu,
-                "pix": pix,
-                "origem": origem,
-                "venda": venda,
-                "modalidade": modalidade,
+                "loja": loja, "nsu": nsu, "pix": pix,
+                "origem": origem, "venda": venda,
+                "modalidade": modalidade, "status": status,
+                "parcelas": parcelas, "chave": chave,
             }
-        except (TypeError, KeyError) as exc:
+        except (TypeError, KeyError, IndexError) as exc:
             raise ValueError("Metadados Valori incompletos") from exc
     statement = model.statements[0]
     txs = statement.transactions
     if not txs:
         raise ValueError("Histórico Valori vazio sem prova do estabelecimento")
+    confirmado = sum(
+        (t.trnamt for t in txs if result[t.fitid]["status"] == "P"),
+        Decimal("0"),
+    )
     if (
         statement.ledgerbal is None
-        or statement.ledgerbal.balamt != sum((t.trnamt for t in txs), Decimal("0"))
+        or statement.ledgerbal.balamt != confirmado
         or statement.banktranlist.dtstart != min(t.dtposted for t in txs)
         or statement.banktranlist.dtend != max(t.dtposted for t in txs)
         or statement.ledgerbal.dtasof != statement.banktranlist.dtend
     ):
-        raise ValueError("Acumulador Valori com saldo derivado ou período divergente")
+        raise ValueError("Acumulador Valori com saldo ou período divergente")
     return result
 
 
